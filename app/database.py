@@ -24,6 +24,8 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 
 def initialise() -> None:
+    from .adapters import ensure_default_adapter
+    ensure_default_adapter()
     with connect() as db:
         db.executescript(
             """

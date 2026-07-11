@@ -6,6 +6,7 @@ from typing import Any
 
 
 ADAPTER_DIR = Path(__file__).parent.parent / "adapters"
+DEFAULT_ADAPTER_PATH = Path(__file__).parent / "default_adapter.json"
 
 
 class AdapterError(ValueError):
@@ -13,7 +14,9 @@ class AdapterError(ValueError):
 
 
 def load_adapters() -> dict[str, dict[str, Any]]:
-    adapters: dict[str, dict[str, Any]] = {}
+    # The builtin is independent of the mutable adapters directory, which is
+    # commonly mounted as a volume in container deployments.
+    adapters: dict[str, dict[str, Any]] = {"default": _builtin_default_adapter()}
     for path in sorted(ADAPTER_DIR.glob("*.json")):
         try:
             adapter = json.loads(path.read_text(encoding="utf-8"))
@@ -24,8 +27,37 @@ def load_adapters() -> dict[str, dict[str, Any]]:
                 raise AdapterError("search and result sections are required")
             adapters[adapter_id] = adapter
         except (OSError, json.JSONDecodeError, KeyError, AdapterError) as error:
+            if path.name == "default.json":
+                # The bundled fallback remains usable and startup repairs this
+                # editable copy on the next initialisation.
+                continue
             raise AdapterError(f"Invalid adapter {path.name}: {error}") from error
     return adapters
+
+
+def _builtin_default_adapter() -> dict[str, Any]:
+    try:
+        adapter = json.loads(DEFAULT_ADAPTER_PATH.read_text(encoding="utf-8"))
+        validate_adapter(adapter)
+        return adapter
+    except (OSError, json.JSONDecodeError, AdapterError) as error:
+        raise AdapterError(f"Bundled default adapter is invalid: {error}") from error
+
+
+def ensure_default_adapter() -> None:
+    """Restore the editable copy when a rebuild or empty volume removed it."""
+    _builtin_default_adapter()
+    path = ADAPTER_DIR / "default.json"
+    if path.exists():
+        try:
+            adapter = json.loads(path.read_text(encoding="utf-8"))
+            validate_adapter(adapter)
+            if adapter.get("id") == "default":
+                return
+        except (OSError, json.JSONDecodeError, AdapterError):
+            pass
+    ADAPTER_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(DEFAULT_ADAPTER_PATH.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def get_adapter(adapter_id: str) -> dict[str, Any]:

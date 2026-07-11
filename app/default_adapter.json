@@ -1,0 +1,27 @@
+{
+  "id": "default",
+  "label": "Default",
+  "search": {
+    "path_template": "/search/{query}/{page}/",
+    "query_encoding": "percent"
+  },
+  "pagination": {
+    "href_regex": "/search/[^\"'<>]+?/(\\d+)/"
+  },
+  "result": {
+    "required_link_href_contains": "/torrent/",
+    "fields": {
+      "title": { "link_href_contains": "/torrent/", "value": "text" },
+      "details_url": { "link_href_contains": "/torrent/", "value": "href", "as": "url" },
+      "category": { "link_href_contains": "/category-search/", "value": "text" },
+      "seeders": { "cell_class_contains": "seeds", "fallback_index": 1, "as": "integer" },
+      "leechers": { "cell_class_contains": "leeches", "fallback_index": 2, "as": "integer" },
+      "torrent_created_at": { "cell_class_contains": "coll-date", "fallback_index": 3, "as": "date" },
+      "size": { "cell_class_contains": "size", "fallback_index": 4 },
+      "uploader": { "cell_class_contains": "uploader", "fallback_index": 5 }
+    }
+  },
+  "magnet": {
+    "href_regex": "magnet:\\?[^\"']+"
+  }
+}

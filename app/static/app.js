@@ -134,6 +134,12 @@ async function refreshQbittorrent() { qbittorrent = await api('/api/qbittorrent'
 
 async function refreshAll() { await Promise.all([refreshAdapters(), refreshSources(), refreshJobs(), refreshSummary(), refreshQbittorrent()]); }
 
+function showDownloadError(button, message) {
+  button.disabled = false; button.textContent = 'Download'; button.classList.add('download-error');
+  button.title = message; $('#download-error-message').textContent = message;
+  if (!$('#download-error-dialog').open) $('#download-error-dialog').showModal();
+}
+
 async function searchLocal() {
   const rawQuery = $('#local-query').value.trim(); const list = $('#results');
   const ranges = {
@@ -161,8 +167,11 @@ async function searchLocal() {
       qbitAction.hidden = false; locationSelect.replaceChildren(...qbittorrent.locations.map(location => new Option(location.label, location.label)));
       qbitAction.querySelector('.confirm-qbit').onclick = async () => {
         const button = qbitAction.querySelector('.confirm-qbit'); button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Downloading…';
-        try { await api(`/api/results/${result.id}/qbittorrent`, {method: 'POST', body: JSON.stringify({location_label: locationSelect.value})}); button.textContent = 'Downloaded'; status(`Sent to qBittorrent (${locationSelect.value}).`); }
-        catch (error) { button.disabled = false; button.textContent = 'Download'; status(error.message); }
+        try {
+          await api(`/api/results/${result.id}/qbittorrent`, {method: 'POST', body: JSON.stringify({location_label: locationSelect.value})});
+          button.classList.remove('download-error'); button.classList.add('download-success'); button.textContent = '✓'; button.title = 'Download sent to qBittorrent'; button.setAttribute('aria-label', 'Download sent');
+          status(`Sent to qBittorrent (${locationSelect.value}).`);
+        } catch (error) { showDownloadError(button, error.message); status(error.message); }
       };
     };
     const showMagnet = (magnetLink, button) => { magnet.href = magnetLink; magnet.hidden = false; button?.remove(); };
@@ -261,6 +270,7 @@ $('#custom-size-form').onsubmit = (event) => {
   if (min < 0 || (max !== null && (max < 0 || max < min))) { $('#custom-size-error').textContent = 'Enter a valid size range.'; return; }
   $('#size-filter').value = 'custom'; $('#custom-size-dialog').close(); closeFilter($('#size-filter')); refreshFilteredResults();
 };
+$('#close-download-error').onclick = $('#dismiss-download-error').onclick = () => $('#download-error-dialog').close();
 $('#auth-form').onsubmit = async (event) => {
   event.preventDefault(); const username = $('#auth-username').value; const password = $('#auth-password').value;
   if (needsSetup && password !== $('#auth-confirm').value) { $('#auth-error').textContent = 'Passwords do not match.'; return; }

@@ -11,7 +11,7 @@ from html import unescape
 from html.parser import HTMLParser
 from typing import Any
 
-from .adapters import get_adapter
+from .adapters import AdapterError, get_adapter
 from .database import connect
 
 USER_AGENT = "ResearchIndex/0.1 (+local metadata research; contact: local-user)"
@@ -212,7 +212,12 @@ def fetch_magnet_now(result_id: int) -> str | None:
         _record_direct_magnet_result(item, "failed", None, None, error)
         raise RuntimeError(f"{type(error).__name__}: {error}") from error
 
-    magnet = parse_magnet_link(html, get_adapter(item["kind"]))
+    try:
+        adapter = get_adapter(item["kind"])
+    except AdapterError as error:
+        _record_direct_magnet_result(item, "failed", http_status, None, error)
+        raise RuntimeError(str(error)) from error
+    magnet = parse_magnet_link(html, adapter)
     _record_direct_magnet_result(item, "succeeded", http_status, magnet, None)
     return magnet
 
