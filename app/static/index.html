@@ -5,9 +5,9 @@
   <title>Torrent Sniffer</title><link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <main>
+  <main id="app" hidden>
     <header class="topbar">
-      <div class="brand"><h1>Torrent Sniffer</h1><p class="notice">Search remote. Filter local.</p><div class="compact-stats"><span><strong id="total-results">0</strong> results</span><span><strong id="total-crawls">0</strong> crawls</span></div></div>
+      <div class="brand"><h1>Torrent Sniffer</h1><p class="notice">Search remote. Filter local.</p><div class="compact-stats"><span><strong id="total-results">0</strong> results</span><span><strong id="total-crawls">0</strong> crawls</span></div><div id="account" class="account" hidden><span id="current-user"></span><button id="open-settings">Settings</button><button id="logout">Log out</button></div></div>
       <aside class="task-preview"><div><p class="eyebrow">ACTIVE</p><strong id="active-crawls">0</strong></div><div id="active-tasks"></div></aside>
     </header>
     <section class="panel controls">
@@ -30,6 +30,8 @@
   <dialog id="source-dialog"><form id="source-form" method="dialog"><header><h2 id="source-dialog-title">Add source</h2><button type="button" class="icon-button" id="close-source-dialog" aria-label="Close">×</button></header><div class="adapter-field"><label>Adapter<select id="source-kind"></select></label><div class="adapter-actions"><button type="button" id="add-adapter">Add</button><button type="button" id="edit-adapter">Edit</button></div></div><label>Source URL<input id="source-url" placeholder="https://authorised-source.example" type="url" required></label><label>Initial pause (seconds)<input id="delay" type="number" min="1" value="20" required></label><footer><button type="button" id="cancel-source">Cancel</button><button class="primary" value="default">Save source</button></footer></form></dialog>
   <dialog id="adapter-dialog"><form id="adapter-form" method="dialog"><header><h2 id="adapter-dialog-title">Add adapter</h2><button type="button" class="icon-button" id="close-adapter-dialog" aria-label="Close">×</button></header><label>Adapter JSON<textarea id="adapter-json" spellcheck="false" required></textarea></label><footer><button type="button" id="cancel-adapter">Cancel</button><button class="primary" value="default">Save adapter</button></footer></form></dialog>
   <template id="result-template"><article><a class="title" target="_blank" rel="noopener"></a><p class="metadata"></p><a class="magnet" target="_blank" rel="noopener" hidden></a><button class="fetch-magnet">Fetch magnet</button><p class="query"></p></article></template>
+  <dialog id="auth-dialog"><form id="auth-form" method="dialog"><header><h2 id="auth-title">Log in</h2></header><p id="auth-copy" class="hint"></p><label>Username<input id="auth-username" autocomplete="username" required></label><label>Password<input id="auth-password" type="password" autocomplete="current-password" required></label><label id="auth-confirm-wrap" hidden>Confirm password<input id="auth-confirm" type="password" autocomplete="new-password"></label><p id="auth-error" class="error"></p><footer><button class="primary" id="auth-submit" value="default">Log in</button></footer></form></dialog>
+  <dialog id="settings-dialog"><div class="settings"><header><h2>Account settings</h2><button type="button" class="icon-button" id="close-settings" aria-label="Close">×</button></header><form id="password-form"><h3>Change password</h3><label>Current password<input id="current-password" type="password" autocomplete="current-password" required></label><label>New password<input id="new-password" type="password" autocomplete="new-password" required></label><button>Change password</button></form><section id="user-management" hidden><h3>Users</h3><div id="user-list"></div><form id="create-user-form"><label>New username<input id="new-username" required></label><label>New password<input id="new-user-password" type="password" required></label><button>Add user</button></form></section><p id="settings-error" class="error"></p></div></dialog>
   <script src="/static/app.js"></script>
 </body>
 </html>

@@ -5,11 +5,37 @@ let jobs = [];
 let adapters = [];
 let editingSourceId = null;
 let editingAdapterId = null;
+let currentUser = null;
+let needsSetup = false;
 
 async function api(path, options = {}) {
   const response = await fetch(path, { headers: {'Content-Type': 'application/json'}, ...options });
-  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || 'Request failed');
+  if (!response.ok) {
+    const message = (await response.json().catch(() => ({}))).detail || 'Request failed';
+    if (response.status === 401 && !path.startsWith('/api/auth/')) showAuth(false);
+    throw new Error(message);
+  }
   return response.status === 204 ? null : response.json();
+}
+
+function showAuth(setup) {
+  needsSetup = setup; currentUser = null; $('#app').hidden = true; $('#account').hidden = true;
+  $('#auth-title').textContent = setup ? 'Create the owner account' : 'Log in';
+  $('#auth-copy').textContent = setup ? 'No account exists yet. This one-time setup creates the administrator.' : 'Use your Torrent Sniffer account.';
+  $('#auth-confirm-wrap').hidden = !setup; $('#auth-submit').textContent = setup ? 'Create account' : 'Log in'; $('#auth-error').textContent = '';
+  if (!$('#auth-dialog').open) $('#auth-dialog').showModal();
+}
+
+async function activateUser(user) {
+  currentUser = user; $('#current-user').textContent = user.username; $('#account').hidden = false; $('#app').hidden = false;
+  if ($('#auth-dialog').open) $('#auth-dialog').close(); await refreshAll();
+}
+
+async function initialiseApp() {
+  try {
+    const auth = await api('/api/auth/status');
+    if (auth.user) await activateUser(auth.user); else showAuth(auth.needs_setup);
+  } catch (error) { status(error.message); }
 }
 
 function sourceName(source) {
@@ -124,6 +150,7 @@ function openSourceDialog(source = null) {
   editingSourceId = source?.id ?? null; $('#source-dialog-title').textContent = source ? 'Edit source' : 'Add source';
   const adapterSelect = $('#source-kind'); adapterSelect.replaceChildren(...adapters.map(adapter => new Option(adapter.label, adapter.id)));
   adapterSelect.value = source?.kind ?? adapters[0]?.id ?? ''; $('#source-url').value = source?.base_url ?? ''; $('#delay').value = source?.min_delay_seconds ?? 20;
+  $('#add-adapter').hidden = !currentUser?.is_admin; $('#edit-adapter').hidden = !currentUser?.is_admin;
   $('#source-dialog').showModal();
 }
 
@@ -175,5 +202,23 @@ $('#queue-search').onclick = async () => {
 };
 $('#local-search').onclick = () => searchLocal().catch(error => status(error.message));
 $('#local-query').addEventListener('keydown', event => { if (event.key === 'Enter') searchLocal().catch(error => status(error.message)); });
-refreshAll().catch(error => status(error.message));
-setInterval(() => refreshJobs().catch(() => {}), 5000);
+$('#auth-form').onsubmit = async (event) => {
+  event.preventDefault(); const username = $('#auth-username').value; const password = $('#auth-password').value;
+  if (needsSetup && password !== $('#auth-confirm').value) { $('#auth-error').textContent = 'Passwords do not match.'; return; }
+  try { const user = await api(needsSetup ? '/api/auth/setup' : '/api/auth/login', {method: 'POST', body: JSON.stringify({username, password})}); await activateUser(user); }
+  catch (error) { $('#auth-error').textContent = error.message; }
+};
+$('#auth-dialog').addEventListener('cancel', event => event.preventDefault());
+$('#logout').onclick = async () => { try { await api('/api/auth/logout', {method: 'POST'}); showAuth(false); } catch (error) { status(error.message); } };
+$('#open-settings').onclick = async () => {
+  $('#settings-error').textContent = ''; $('#password-form').reset(); const management = $('#user-management'); management.hidden = !currentUser?.is_admin;
+  try {
+    if (currentUser?.is_admin) { const users = await api('/api/auth/users'); $('#user-list').replaceChildren(...users.map(user => { const item = document.createElement('p'); item.textContent = `${user.username}${user.is_admin ? ' · administrator' : ''}`; return item; })); }
+    $('#settings-dialog').showModal();
+  } catch (error) { status(error.message); }
+};
+$('#close-settings').onclick = () => $('#settings-dialog').close();
+$('#password-form').onsubmit = async (event) => { event.preventDefault(); try { await api('/api/auth/password', {method: 'POST', body: JSON.stringify({current_password: $('#current-password').value, new_password: $('#new-password').value})}); $('#password-form').reset(); $('#settings-error').textContent = 'Password changed.'; } catch (error) { $('#settings-error').textContent = error.message; } };
+$('#create-user-form').onsubmit = async (event) => { event.preventDefault(); try { await api('/api/auth/users', {method: 'POST', body: JSON.stringify({username: $('#new-username').value, password: $('#new-user-password').value})}); const users = await api('/api/auth/users'); $('#user-list').replaceChildren(...users.map(user => { const item = document.createElement('p'); item.textContent = `${user.username}${user.is_admin ? ' · administrator' : ''}`; return item; })); $('#create-user-form').reset(); $('#settings-error').textContent = 'User created.'; } catch (error) { $('#settings-error').textContent = error.message; } };
+initialiseApp();
+setInterval(() => { if (currentUser) refreshJobs().catch(() => {}); }, 5000);

@@ -107,6 +107,24 @@ def initialise() -> None:
               completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS request_log_job ON request_log(job_id, id DESC);
+
+            CREATE TABLE IF NOT EXISTS users (
+              id INTEGER PRIMARY KEY,
+              username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+              password_salt TEXT NOT NULL,
+              password_hash TEXT NOT NULL,
+              is_admin INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+              id INTEGER PRIMARY KEY,
+              user_id INTEGER NOT NULL REFERENCES users(id),
+              token_hash TEXT NOT NULL UNIQUE,
+              expires_at TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS sessions_token ON sessions(token_hash);
             CREATE VIRTUAL TABLE IF NOT EXISTS results_fts USING fts5(
               title, description, content='results', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
             );
