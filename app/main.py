@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from .adapters import AdapterError, get_adapter, get_adapter_definition, public_adapters, save_adapter
 from .crawler import PacingRequiredError, fetch_magnet_now, run_one_job
 from .database import connect, initialise
+from .qbittorrent import add_magnet as add_to_qbittorrent, clear_config as clear_qbittorrent_config, public_config as public_qbittorrent_config, save_config as save_qbittorrent_config
 
 STATIC_DIR = Path(__file__).parent / "static"
 WORD = re.compile(r"[\w]+", re.UNICODE)
@@ -44,12 +45,36 @@ class AdapterInput(BaseModel):
 
 class Credentials(BaseModel):
     username: str = Field(min_length=3, max_length=32)
-    password: str = Field(min_length=8, max_length=256)
+    password: str = Field(min_length=1, max_length=256)
 
 
 class PasswordChange(BaseModel):
-    current_password: str = Field(min_length=8, max_length=256)
-    new_password: str = Field(min_length=8, max_length=256)
+    new_password: str = Field(min_length=1, max_length=256)
+
+
+class UserCreateInput(Credentials):
+    group: str = "user"
+
+
+class UserUpdateInput(BaseModel):
+    username: str = Field(min_length=3, max_length=32)
+    group: str = "user"
+    password: str | None = Field(default=None, max_length=256)
+
+
+class QbittorrentLocation(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    path: str = Field(min_length=1, max_length=1024)
+
+
+class QbittorrentConfigInput(BaseModel):
+    base_url: str
+    api_key: str | None = Field(default=None, max_length=1024)
+    locations: list[QbittorrentLocation] = Field(min_length=1)
+
+
+class QbittorrentAddInput(BaseModel):
+    location_label: str = Field(min_length=1, max_length=80)
 
 
 def _validate_username(username: str) -> str:
@@ -71,7 +96,8 @@ def _verify_password(password: str, salt: str, password_hash: str) -> bool:
 
 
 def _public_user(row: dict[str, Any]) -> dict[str, Any]:
-    return {"id": row["id"], "username": row["username"], "is_admin": bool(row["is_admin"])}
+    is_admin = bool(row["is_admin"])
+    return {"id": row["id"], "username": row["username"], "is_admin": is_admin, "group": "admin" if is_admin else "user"}
 
 
 def _start_session(db, user: dict[str, Any], response: Response) -> None:
@@ -181,29 +207,102 @@ def logout(request: Request, response: Response):
 def list_users(_: dict[str, Any] = Depends(require_admin)):
     with connect() as db:
         rows = db.execute("SELECT id, username, is_admin, created_at FROM users ORDER BY username COLLATE NOCASE").fetchall()
-    return [dict(row) for row in rows]
+    return [{**dict(row), "group": "admin" if row["is_admin"] else "user"} for row in rows]
 
 
 @app.post("/api/auth/users", status_code=201)
-def create_user(credentials: Credentials, _: dict[str, Any] = Depends(require_admin)):
+def create_user(credentials: UserCreateInput, _: dict[str, Any] = Depends(require_admin)):
     username = _validate_username(credentials.username)
+    if credentials.group not in {"admin", "user"}:
+        raise HTTPException(422, "User group must be admin or user")
     with connect() as db:
         if db.execute("SELECT 1 FROM users WHERE username=? COLLATE NOCASE", (username,)).fetchone():
             raise HTTPException(409, "That username already exists")
         salt, password_hash = _new_password(credentials.password)
-        db.execute("INSERT INTO users(username, password_salt, password_hash) VALUES (?, ?, ?)", (username, salt, password_hash))
+        db.execute("INSERT INTO users(username, password_salt, password_hash, is_admin) VALUES (?, ?, ?, ?)", (username, salt, password_hash, credentials.group == "admin"))
         user = dict(db.execute("SELECT * FROM users WHERE id=last_insert_rowid()").fetchone())
     return _public_user(user)
+
+
+@app.put("/api/auth/users/{user_id}")
+def update_user(user_id: int, update: UserUpdateInput, _: dict[str, Any] = Depends(require_admin)):
+    username = _validate_username(update.username)
+    if update.group not in {"admin", "user"}:
+        raise HTTPException(422, "User group must be admin or user")
+    if update.password is not None and not update.password:
+        raise HTTPException(422, "Password cannot be empty when changing it")
+    with connect() as db:
+        existing = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not existing:
+            raise HTTPException(404, "User not found")
+        if db.execute("SELECT 1 FROM users WHERE username=? COLLATE NOCASE AND id<>?", (username, user_id)).fetchone():
+            raise HTTPException(409, "That username already exists")
+        if existing["is_admin"] and update.group == "user":
+            admin_count = db.execute("SELECT COUNT(*) FROM users WHERE is_admin=1").fetchone()[0]
+            if admin_count <= 1:
+                raise HTTPException(409, "At least one administrator must remain")
+        if update.password is not None:
+            salt, password_hash = _new_password(update.password)
+            db.execute(
+                "UPDATE users SET username=?, is_admin=?, password_salt=?, password_hash=? WHERE id=?",
+                (username, update.group == "admin", salt, password_hash, user_id),
+            )
+        else:
+            db.execute("UPDATE users SET username=?, is_admin=? WHERE id=?", (username, update.group == "admin", user_id))
+        user = dict(db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
+    return _public_user(user)
+
+
+@app.delete("/api/auth/users/{user_id}", status_code=204)
+def delete_user(user_id: int, current_user: dict[str, Any] = Depends(require_admin)):
+    if user_id == current_user["id"]:
+        raise HTTPException(409, "You cannot remove your own account")
+    with connect() as db:
+        existing = db.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        if not existing:
+            raise HTTPException(404, "User not found")
+        if existing["is_admin"]:
+            admin_count = db.execute("SELECT COUNT(*) FROM users WHERE is_admin=1").fetchone()[0]
+            if admin_count <= 1:
+                raise HTTPException(409, "At least one administrator must remain")
+        db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+        db.execute("DELETE FROM users WHERE id=?", (user_id,))
+    return Response(status_code=204)
 
 
 @app.post("/api/auth/password", status_code=204)
 def change_password(change: PasswordChange, user: dict[str, Any] = Depends(require_user)):
     with connect() as db:
-        account = db.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
-        if not account or not _verify_password(change.current_password, account["password_salt"], account["password_hash"]):
-            raise HTTPException(401, "Current password is incorrect")
         salt, password_hash = _new_password(change.new_password)
         db.execute("UPDATE users SET password_salt=?, password_hash=? WHERE id=?", (salt, password_hash, user["id"]))
+    return Response(status_code=204)
+
+
+@app.get("/api/qbittorrent")
+def qbittorrent_status(_: dict[str, Any] = Depends(require_user)):
+    return public_qbittorrent_config()
+
+
+@app.put("/api/qbittorrent", status_code=204)
+def configure_qbittorrent(config: QbittorrentConfigInput, _: dict[str, Any] = Depends(require_admin)):
+    parsed = urlparse(config.base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(422, "qBittorrent URL must be an absolute HTTP(S) URL")
+    locations = [{"label": location.label.strip(), "path": location.path.strip()} for location in config.locations]
+    if any(not item["label"] or not item["path"] for item in locations):
+        raise HTTPException(422, "Every file location needs a label and a path")
+    if len({item["label"] for item in locations}) != len(locations):
+        raise HTTPException(422, "File location labels must be unique")
+    try:
+        save_qbittorrent_config(config.base_url, config.api_key, locations)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    return Response(status_code=204)
+
+
+@app.delete("/api/qbittorrent", status_code=204)
+def remove_qbittorrent(_: dict[str, Any] = Depends(require_admin)):
+    clear_qbittorrent_config()
     return Response(status_code=204)
 
 
@@ -340,6 +439,23 @@ def queue_magnet_lookup(result_id: int, _: dict[str, Any] = Depends(require_user
     except RuntimeError as error:
         raise HTTPException(502, str(error)) from error
     return {"magnet_link": magnet_link}
+
+
+@app.post("/api/results/{result_id}/qbittorrent", status_code=204)
+def add_result_to_qbittorrent(result_id: int, request: QbittorrentAddInput, _: dict[str, Any] = Depends(require_user)):
+    with connect() as db:
+        result = db.execute("SELECT magnet_link FROM results WHERE id=?", (result_id,)).fetchone()
+    if not result:
+        raise HTTPException(404, "Result not found")
+    if not result["magnet_link"]:
+        raise HTTPException(409, "Fetch the magnet link first")
+    try:
+        add_to_qbittorrent(result["magnet_link"], request.location_label)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(502, str(error)) from error
+    return Response(status_code=204)
 
 
 @app.get("/api/jobs/{job_id}/requests")

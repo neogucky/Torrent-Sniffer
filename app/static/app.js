@@ -5,13 +5,16 @@ let jobs = [];
 let adapters = [];
 let editingSourceId = null;
 let editingAdapterId = null;
+let editingUserId = null;
 let currentUser = null;
 let needsSetup = false;
+let qbittorrent = {configured: false, locations: []};
 
 async function api(path, options = {}) {
   const response = await fetch(path, { headers: {'Content-Type': 'application/json'}, ...options });
   if (!response.ok) {
-    const message = (await response.json().catch(() => ({}))).detail || 'Request failed';
+    const payload = await response.json().catch(() => ({}));
+    const message = Array.isArray(payload.detail) ? payload.detail.map(item => item.msg || 'Invalid value').join('; ') : (payload.detail || 'Request failed');
     if (response.status === 401 && !path.startsWith('/api/auth/')) showAuth(false);
     throw new Error(message);
   }
@@ -127,7 +130,9 @@ async function refreshSummary() {
   $('#total-results').textContent = data.total_results; $('#total-crawls').textContent = data.total_crawls; $('#active-crawls').textContent = data.active_crawls || 0;
 }
 
-async function refreshAll() { await Promise.all([refreshAdapters(), refreshSources(), refreshJobs(), refreshSummary()]); }
+async function refreshQbittorrent() { qbittorrent = await api('/api/qbittorrent'); }
+
+async function refreshAll() { await Promise.all([refreshAdapters(), refreshSources(), refreshJobs(), refreshSummary(), refreshQbittorrent()]); }
 
 async function searchLocal() {
   const rawQuery = $('#local-query').value.trim(); const list = $('#results');
@@ -138,7 +143,18 @@ async function searchLocal() {
     const node = $('#result-template').content.cloneNode(true); const link = node.querySelector('.title'); link.href = result.details_url; link.textContent = result.title;
     node.querySelector('.metadata').textContent = [result.category, result.size, `↑ ${result.seeders ?? '—'}`, `↓ ${result.leechers ?? '—'}`].filter(Boolean).join(' · ');
     const magnet = node.querySelector('.magnet'); const fetchButton = node.querySelector('.fetch-magnet');
-    const showMagnet = (link, button) => { magnet.href = link; magnet.textContent = 'Magnet link: open'; magnet.hidden = false; button?.remove(); };
+    const qbitAction = node.querySelector('.qbit-action'); const locationPicker = node.querySelector('.qbit-location'); const locationSelect = locationPicker.querySelector('select');
+    const showQbittorrent = () => {
+      if (!qbittorrent.configured) return;
+      qbitAction.hidden = false; locationSelect.replaceChildren(...qbittorrent.locations.map(location => new Option(location.label, location.label)));
+      qbitAction.querySelector('.show-qbit').onclick = () => { locationPicker.hidden = false; };
+      qbitAction.querySelector('.confirm-qbit').onclick = async () => {
+        const button = qbitAction.querySelector('.confirm-qbit'); button.disabled = true; button.textContent = 'Adding…';
+        try { await api(`/api/results/${result.id}/qbittorrent`, {method: 'POST', body: JSON.stringify({location_label: locationSelect.value})}); button.textContent = 'Added'; status(`Added to qBittorrent (${locationSelect.value}).`); }
+        catch (error) { button.disabled = false; button.textContent = 'Add'; status(error.message); }
+      };
+    };
+    const showMagnet = (link, button) => { magnet.href = link; magnet.textContent = 'Magnet link: open'; magnet.hidden = false; button?.remove(); showQbittorrent(); };
     if (result.magnet_link) showMagnet(result.magnet_link, fetchButton);
     else { const button = fetchButton; button.onclick = async () => { const original = button.textContent; button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Fetching…'; try { const data = await api(`/api/results/${result.id}/magnet`, {method: 'POST'}); if (data.magnet_link) { showMagnet(data.magnet_link, button); status('Magnet link fetched.'); } else { button.textContent = 'No magnet link found'; status('The detail page did not contain a magnet link.'); } } catch (error) { button.disabled = false; button.textContent = original; status(error.message); } }; }
     node.querySelector('.query').textContent = `Collected from “${result.remote_query}” · ${result.discovered_at}`; list.append(node);
@@ -210,15 +226,92 @@ $('#auth-form').onsubmit = async (event) => {
 };
 $('#auth-dialog').addEventListener('cancel', event => event.preventDefault());
 $('#logout').onclick = async () => { try { await api('/api/auth/logout', {method: 'POST'}); showAuth(false); } catch (error) { status(error.message); } };
-$('#open-settings').onclick = async () => {
-  $('#settings-error').textContent = ''; $('#password-form').reset(); const management = $('#user-management'); management.hidden = !currentUser?.is_admin;
+function addQbittorrentLocation(location = {label: '', path: ''}) {
+  const row = document.createElement('div'); row.className = 'qbit-location-row';
+  const label = document.createElement('input'); label.placeholder = 'Label'; label.value = location.label;
+  const path = document.createElement('input'); path.placeholder = 'Path in qBittorrent container'; path.value = location.path;
+  const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove'; remove.onclick = () => row.remove();
+  row.append(label, path, remove); $('#qbit-locations').append(row);
+}
+
+function renderQbittorrentLocations(locations) {
+  $('#qbit-locations').replaceChildren(); (locations.length ? locations : [{label: '', path: ''}]).forEach(addQbittorrentLocation);
+}
+
+async function loadUsers() {
+  const users = await api('/api/auth/users');
+  const list = $('#user-list'); list.replaceChildren();
+  for (const user of users) {
+    const item = document.createElement('div'); item.className = 'user-row';
+    const label = document.createElement('span'); label.textContent = `${user.username} · ${user.group}`;
+    const actions = document.createElement('div'); actions.className = 'user-actions';
+    const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = 'Edit'; edit.onclick = () => openUserDialog(user);
+    const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove'; remove.disabled = user.id === currentUser.id;
+    remove.title = remove.disabled ? 'You cannot remove your own account' : '';
+    remove.onclick = () => removeUser(user);
+    actions.append(edit, remove); item.append(label, actions); list.append(item);
+  }
+}
+
+function openUserDialog(user = null) {
+  editingUserId = user?.id ?? null;
+  $('#user-dialog-title').textContent = user ? `Edit ${user.username}` : 'Add user';
+  $('#user-username').value = user?.username ?? ''; $('#user-group').value = user?.group ?? 'user';
+  $('#user-password').value = ''; $('#user-password').required = !user; $('#user-password-hint').hidden = !user;
+  $('#user-error').textContent = ''; $('#user-dialog').showModal();
+}
+
+async function removeUser(user) {
+  if (!confirm(`Remove user “${user.username}”?`)) return;
+  try { await api(`/api/auth/users/${user.id}`, {method: 'DELETE'}); await loadUsers(); $('#settings-error').textContent = 'User removed.'; }
+  catch (error) { $('#settings-error').textContent = error.message; }
+}
+
+function renderQbittorrentSummary() {
+  $('#configure-qbit').textContent = qbittorrent.configured ? 'Edit configuration' : 'Configure qBittorrent';
+  $('#qbit-status').textContent = qbittorrent.configured
+    ? `Configured: ${qbittorrent.base_url} · ${qbittorrent.locations.length} file location${qbittorrent.locations.length === 1 ? '' : 's'}`
+    : 'No qBittorrent integration configured.';
+}
+
+async function openQbittorrentDialog() {
   try {
-    if (currentUser?.is_admin) { const users = await api('/api/auth/users'); $('#user-list').replaceChildren(...users.map(user => { const item = document.createElement('p'); item.textContent = `${user.username}${user.is_admin ? ' · administrator' : ''}`; return item; })); }
+    await refreshQbittorrent();
+    $('#qbit-url').value = qbittorrent.base_url || ''; $('#qbit-api-key').value = '';
+    $('#qbit-api-key').placeholder = qbittorrent.configured ? 'Leave blank to keep existing key' : 'Required';
+    $('#remove-qbit').hidden = !qbittorrent.configured; $('#qbit-error').textContent = '';
+    renderQbittorrentLocations(qbittorrent.locations || []); $('#qbit-dialog').showModal();
+  } catch (error) { $('#settings-error').textContent = error.message; }
+}
+
+$('#open-settings').onclick = async () => {
+  $('#settings-error').textContent = ''; $('#password-form').reset(); const management = $('#user-management'); const qbitManagement = $('#qbit-management'); management.hidden = !currentUser?.is_admin; qbitManagement.hidden = !currentUser?.is_admin;
+  try {
+    if (currentUser?.is_admin) { await loadUsers(); await refreshQbittorrent(); renderQbittorrentSummary(); }
     $('#settings-dialog').showModal();
   } catch (error) { status(error.message); }
 };
 $('#close-settings').onclick = () => $('#settings-dialog').close();
-$('#password-form').onsubmit = async (event) => { event.preventDefault(); try { await api('/api/auth/password', {method: 'POST', body: JSON.stringify({current_password: $('#current-password').value, new_password: $('#new-password').value})}); $('#password-form').reset(); $('#settings-error').textContent = 'Password changed.'; } catch (error) { $('#settings-error').textContent = error.message; } };
-$('#create-user-form').onsubmit = async (event) => { event.preventDefault(); try { await api('/api/auth/users', {method: 'POST', body: JSON.stringify({username: $('#new-username').value, password: $('#new-user-password').value})}); const users = await api('/api/auth/users'); $('#user-list').replaceChildren(...users.map(user => { const item = document.createElement('p'); item.textContent = `${user.username}${user.is_admin ? ' · administrator' : ''}`; return item; })); $('#create-user-form').reset(); $('#settings-error').textContent = 'User created.'; } catch (error) { $('#settings-error').textContent = error.message; } };
+$('#password-form').onsubmit = async (event) => { event.preventDefault(); if ($('#new-password').value !== $('#confirm-new-password').value) { $('#settings-error').textContent = 'New passwords do not match.'; return; } try { await api('/api/auth/password', {method: 'POST', body: JSON.stringify({new_password: $('#new-password').value})}); $('#password-form').reset(); $('#settings-error').textContent = 'Password changed.'; } catch (error) { $('#settings-error').textContent = error.message; } };
+$('#add-user').onclick = () => openUserDialog();
+$('#close-user-dialog').onclick = $('#cancel-user').onclick = () => $('#user-dialog').close();
+$('#user-form').onsubmit = async (event) => {
+  event.preventDefault(); const password = $('#user-password').value;
+  const payload = {username: $('#user-username').value, group: $('#user-group').value};
+  if (password) payload.password = password;
+  try {
+    await api(editingUserId ? `/api/auth/users/${editingUserId}` : '/api/auth/users', {method: editingUserId ? 'PUT' : 'POST', body: JSON.stringify({...payload, ...(editingUserId ? {} : {password})})});
+    $('#user-dialog').close(); await loadUsers(); $('#settings-error').textContent = editingUserId ? 'User updated.' : 'User created.';
+  } catch (error) { $('#user-error').textContent = error.message; }
+};
+$('#configure-qbit').onclick = () => openQbittorrentDialog();
+$('#close-qbit-dialog').onclick = $('#cancel-qbit').onclick = () => $('#qbit-dialog').close();
+$('#add-qbit-location').onclick = () => addQbittorrentLocation();
+$('#qbit-form').onsubmit = async (event) => {
+  event.preventDefault(); const locations = [...document.querySelectorAll('#qbit-locations .qbit-location-row')].map(row => ({label: row.children[0].value, path: row.children[1].value}));
+  try { await api('/api/qbittorrent', {method: 'PUT', body: JSON.stringify({base_url: $('#qbit-url').value, api_key: $('#qbit-api-key').value || null, locations})}); await refreshQbittorrent(); renderQbittorrentSummary(); $('#qbit-dialog').close(); $('#settings-error').textContent = 'qBittorrent integration saved.'; }
+  catch (error) { $('#qbit-error').textContent = error.message; }
+};
+$('#remove-qbit').onclick = async () => { if (!confirm('Disable the qBittorrent integration?')) return; try { await api('/api/qbittorrent', {method: 'DELETE'}); await refreshQbittorrent(); renderQbittorrentSummary(); $('#qbit-dialog').close(); $('#settings-error').textContent = 'qBittorrent integration disabled.'; } catch (error) { $('#qbit-error').textContent = error.message; } };
 initialiseApp();
 setInterval(() => { if (currentUser) refreshJobs().catch(() => {}); }, 5000);

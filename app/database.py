@@ -125,6 +125,14 @@ def initialise() -> None:
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS sessions_token ON sessions(token_hash);
+
+            CREATE TABLE IF NOT EXISTS qbittorrent_config (
+              id INTEGER PRIMARY KEY CHECK(id=1),
+              base_url TEXT NOT NULL,
+              api_key TEXT NOT NULL,
+              locations_json TEXT NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE VIRTUAL TABLE IF NOT EXISTS results_fts USING fts5(
               title, description, content='results', content_rowid='id', tokenize='unicode61 remove_diacritics 2'
             );
