@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -64,9 +65,11 @@ def initialise() -> None:
               category TEXT,
               details_url TEXT NOT NULL,
               size TEXT,
+              size_bytes INTEGER,
               seeders INTEGER,
               leechers INTEGER,
               uploader TEXT,
+              torrent_created_at TEXT,
               description TEXT NOT NULL DEFAULT '',
               magnet_link TEXT,
               discovered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -150,8 +153,12 @@ def initialise() -> None:
         )
         _migrate_crawl_jobs(db)
         _migrate_additive_columns(db)
+        _backfill_result_sizes(db)
         _backfill_legacy_progress(db)
         db.execute("CREATE INDEX IF NOT EXISTS crawl_jobs_ready ON crawl_jobs(status, run_after)")
+        db.execute("CREATE INDEX IF NOT EXISTS results_size_bytes ON results(size_bytes)")
+        db.execute("CREATE INDEX IF NOT EXISTS results_seeders ON results(seeders)")
+        db.execute("CREATE INDEX IF NOT EXISTS results_torrent_created_at ON results(torrent_created_at)")
 
 
 def _migrate_crawl_jobs(db: sqlite3.Connection) -> None:
@@ -216,9 +223,24 @@ def _migrate_additive_columns(db: sqlite3.Connection) -> None:
     if _add_column_if_missing(db, "crawl_jobs", "matches_seen", "INTEGER NOT NULL DEFAULT 0"):
         db.execute("UPDATE crawl_jobs SET matches_seen=results_found")
     _add_column_if_missing(db, "results", "magnet_link", "TEXT")
+    _add_column_if_missing(db, "results", "size_bytes", "INTEGER")
+    _add_column_if_missing(db, "results", "torrent_created_at", "TEXT")
     _add_column_if_missing(db, "detail_tasks", "on_demand", "INTEGER NOT NULL DEFAULT 0")
     db.execute("UPDATE detail_tasks SET on_demand=0 WHERE on_demand=1")
     db.execute("UPDATE crawl_jobs SET status='stopped' WHERE status='paused'")
+
+
+def _backfill_result_sizes(db: sqlite3.Connection) -> None:
+    """Make stored size text from earlier crawls immediately filterable, locally."""
+    factors = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+    for row in db.execute("SELECT id, size FROM results WHERE size_bytes IS NULL AND size IS NOT NULL"):
+        match = re.search(r"([0-9]+(?:[.,][0-9]+)?)\s*([KMGT]?i?B)", row["size"], flags=re.IGNORECASE)
+        if not match:
+            continue
+        unit = match.group(2).upper().replace("I", "")
+        if unit in factors:
+            value = float(match.group(1).replace(",", "."))
+            db.execute("UPDATE results SET size_bytes=? WHERE id=?", (round(value * factors[unit]), row["id"]))
 
 
 def _add_column_if_missing(db: sqlite3.Connection, table: str, name: str, definition: str) -> bool:

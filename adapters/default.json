@@ -16,6 +16,7 @@
       "category": { "link_href_contains": "/category-search/", "value": "text" },
       "seeders": { "cell_class_contains": "seeds", "fallback_index": 1, "as": "integer" },
       "leechers": { "cell_class_contains": "leeches", "fallback_index": 2, "as": "integer" },
+      "torrent_created_at": { "cell_class_contains": "coll-date", "fallback_index": 3, "as": "date" },
       "size": { "cell_class_contains": "size", "fallback_index": 4 },
       "uploader": { "cell_class_contains": "uploader", "fallback_index": 5 }
     }

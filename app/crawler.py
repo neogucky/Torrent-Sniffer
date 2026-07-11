@@ -40,6 +40,8 @@ class ParsedResult:
     seeders: int | None = None
     leechers: int | None = None
     uploader: str | None = None
+    torrent_created_at: str | None = None
+    size_bytes: int | None = None
 
 
 class SearchTableParser(HTMLParser):
@@ -109,7 +111,44 @@ def _field_value(row: list[dict[str, object]], rule: dict[str, Any], base_url: s
         return int(digits) if digits else None
     if rule.get("as") == "url":
         return urllib.parse.urljoin(base_url, raw)
+    if rule.get("as") == "date":
+        return parse_torrent_date(raw)
     return raw.strip()
+
+
+def parse_size_bytes(size: str | None) -> int | None:
+    if not size:
+        return None
+    match = re.search(r"([0-9]+(?:[.,][0-9]+)?)\s*([KMGT]?i?B)", size, flags=re.IGNORECASE)
+    if not match:
+        return None
+    factors = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+    unit = match.group(2).upper().replace("I", "")
+    return round(float(match.group(1).replace(",", ".")) * factors[unit]) if unit in factors else None
+
+
+def parse_torrent_date(value: str) -> str | None:
+    """Normalise common source date labels while the search page is being crawled."""
+    cleaned = re.sub(r"\s+", " ", value.replace("\xa0", " ")).strip()
+    today = utc_now().date()
+    lowered = cleaned.lower()
+    if lowered == "today":
+        return today.isoformat()
+    if lowered == "yesterday":
+        return (today - timedelta(days=1)).isoformat()
+    relative = re.fullmatch(r"(\d+)\s+(minute|hour|day|week|month|year)s?\s+ago", lowered)
+    if relative:
+        amount, unit = int(relative.group(1)), relative.group(2)
+        days = amount * {"minute": 0, "hour": 0, "day": 1, "week": 7, "month": 30, "year": 365}[unit]
+        return (today - timedelta(days=days)).isoformat()
+    normalised = re.sub(r"(\d{1,2})(?:st|nd|rd|th)", r"\1", cleaned, flags=re.IGNORECASE)
+    normalised = normalised.replace(".", "").replace(",", "")
+    for fmt in ("%Y-%m-%d", "%d %b %Y", "%b %d %Y", "%b %d '%y", "%b %d %y"):
+        try:
+            return datetime.strptime(normalised, fmt).date().isoformat()
+        except ValueError:
+            pass
+    return None
 
 
 def parse_results(html: str, base_url: str, adapter: dict[str, Any]) -> list[ParsedResult]:
@@ -131,6 +170,8 @@ def parse_results(html: str, base_url: str, adapter: dict[str, Any]) -> list[Par
             leechers=values.get("leechers") if isinstance(values.get("leechers"), int) else None,
             size=values.get("size") if isinstance(values.get("size"), str) else None,
             uploader=values.get("uploader") if isinstance(values.get("uploader"), str) else None,
+            torrent_created_at=values.get("torrent_created_at") if isinstance(values.get("torrent_created_at"), str) else None,
+            size_bytes=parse_size_bytes(values.get("size") if isinstance(values.get("size"), str) else None),
         ))
     return parsed
 
@@ -148,7 +189,7 @@ def parse_magnet_link(html: str, adapter: dict[str, Any]) -> str | None:
 
 
 def fetch_magnet_now(result_id: int) -> str | None:
-    """Perform one user-initiated detail request, while preserving per-source pacing."""
+    """Perform one immediate user-initiated detail request, outside crawl pacing."""
     with connect() as db:
         item = db.execute(
             """SELECT r.*, s.kind, s.min_delay_seconds, s.current_delay_seconds, s.successful_requests, s.next_allowed_at,
@@ -159,12 +200,6 @@ def fetch_magnet_now(result_id: int) -> str | None:
         raise ValueError("Result or its source no longer exists")
     if item["magnet_link"]:
         return item["magnet_link"]
-    if item["next_allowed_at"]:
-        allowed_at = datetime.fromisoformat(item["next_allowed_at"].replace("Z", "+00:00"))
-        remaining = (allowed_at - utc_now()).total_seconds()
-        if remaining > 0:
-            raise PacingRequiredError(max(1, int(remaining) + 1))
-
     try:
         request = urllib.request.Request(item["details_url"], headers={"User-Agent": USER_AGENT, "Accept": "text/html"})
         with urllib.request.urlopen(request, timeout=25) as response:
@@ -183,22 +218,17 @@ def fetch_magnet_now(result_id: int) -> str | None:
 
 
 def _record_direct_magnet_result(item: sqlite3.Row, status: str, http_status: int | None, magnet: str | None, error: Exception | None) -> None:
+    """Save an immediate lookup without changing the queued crawler's delay state."""
     with connect() as db:
-        current_source = db.execute("SELECT * FROM sources WHERE id=?", (item["source_id"],)).fetchone()
-        if not current_source:
-            return
-        wait_after, adjustment = _adjust_source_delay(db, current_source, succeeded=status == "succeeded")
-        next_allowed = iso(utc_now() + timedelta(seconds=wait_after))
         if status == "succeeded":
             db.execute("UPDATE results SET magnet_link=? WHERE id=?", (magnet, item["id"]))
-        db.execute("UPDATE sources SET next_allowed_at=? WHERE id=?", (next_allowed, item["source_id"]))
         if item["job_id"] is not None:
             db.execute(
                 """INSERT INTO request_log(source_id, job_id, request_type, url, status, http_status, result_count,
                    wait_before_seconds, wait_adjustment_seconds, effective_wait_seconds, error)
                    VALUES (?, ?, 'detail', ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (item["source_id"], item["job_id"], item["details_url"], status, http_status,
-                 1 if magnet else 0, item["current_delay_seconds"], adjustment, wait_after,
+                 1 if magnet else 0, 0, 0, 0,
                  f"{type(error).__name__}: {error}" if error else None),
             )
 
@@ -280,13 +310,14 @@ def _complete_search_request(job: sqlite3.Row, url: str, html: str, http_status:
             if not already_saved:
                 new_results += 1
             db.execute(
-                """INSERT INTO results(source_id, remote_query, title, category, details_url, size, seeders, leechers, uploader)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """INSERT INTO results(source_id, remote_query, title, category, details_url, size, size_bytes, seeders, leechers, uploader, torrent_created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(source_id, details_url) DO UPDATE SET
                      remote_query=excluded.remote_query, title=excluded.title, category=excluded.category,
-                     size=excluded.size, seeders=excluded.seeders, leechers=excluded.leechers, uploader=excluded.uploader,
+                     size=excluded.size, size_bytes=excluded.size_bytes, seeders=excluded.seeders, leechers=excluded.leechers, uploader=excluded.uploader,
+                     torrent_created_at=excluded.torrent_created_at,
                      discovered_at=CURRENT_TIMESTAMP""",
-                (job["source_id"], job["query"], item.title, item.category, item.details_url, item.size, item.seeders, item.leechers, item.uploader),
+                (job["source_id"], job["query"], item.title, item.category, item.details_url, item.size, item.size_bytes, item.seeders, item.leechers, item.uploader, item.torrent_created_at),
             )
         db.execute("UPDATE sources SET next_allowed_at=? WHERE id=?", (next_allowed, job["source_id"]))
         if more_pages:

@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .adapters import AdapterError, get_adapter, get_adapter_definition, public_adapters, save_adapter
-from .crawler import PacingRequiredError, fetch_magnet_now, run_one_job
+from .crawler import fetch_magnet_now, run_one_job
 from .database import connect, initialise
 from .qbittorrent import add_magnet as add_to_qbittorrent, clear_config as clear_qbittorrent_config, public_config as public_qbittorrent_config, save_config as save_qbittorrent_config
 
@@ -432,8 +432,6 @@ def list_jobs(_: dict[str, Any] = Depends(require_user)):
 def queue_magnet_lookup(result_id: int, _: dict[str, Any] = Depends(require_user)):
     try:
         magnet_link = fetch_magnet_now(result_id)
-    except PacingRequiredError as error:
-        raise HTTPException(429, str(error)) from error
     except ValueError as error:
         raise HTTPException(404, str(error)) from error
     except RuntimeError as error:
@@ -447,10 +445,18 @@ def add_result_to_qbittorrent(result_id: int, request: QbittorrentAddInput, _: d
         result = db.execute("SELECT magnet_link FROM results WHERE id=?", (result_id,)).fetchone()
     if not result:
         raise HTTPException(404, "Result not found")
-    if not result["magnet_link"]:
-        raise HTTPException(409, "Fetch the magnet link first")
+    magnet_link = result["magnet_link"]
+    if not magnet_link:
+        try:
+            magnet_link = fetch_magnet_now(result_id)
+        except ValueError as error:
+            raise HTTPException(404, str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(502, str(error)) from error
+    if not magnet_link:
+        raise HTTPException(422, "The detail page did not contain a magnet link")
     try:
-        add_to_qbittorrent(result["magnet_link"], request.location_label)
+        add_to_qbittorrent(magnet_link, request.location_label)
     except ValueError as error:
         raise HTTPException(409, str(error)) from error
     except RuntimeError as error:
@@ -523,18 +529,57 @@ def summary(_: dict[str, Any] = Depends(require_user)):
 
 
 @app.get("/api/results")
-def search_results(q: str = "", include_description: bool = False, limit: int = 100, _: dict[str, Any] = Depends(require_user)):
+def search_results(
+    q: str = "",
+    include_description: bool = False,
+    min_size_bytes: int = 0,
+    max_size_bytes: int | None = None,
+    min_seeders: int = 0,
+    sort: str = "discovered_desc",
+    limit: int = 100,
+    _: dict[str, Any] = Depends(require_user),
+):
     limit = max(1, min(limit, 250))
+    if min_size_bytes < 0 or (max_size_bytes is not None and max_size_bytes < 0):
+        raise HTTPException(422, "Size filters cannot be negative")
+    if max_size_bytes is not None and max_size_bytes < min_size_bytes:
+        raise HTTPException(422, "Maximum size must be at least the minimum size")
+    if min_seeders < 0:
+        raise HTTPException(422, "Minimum seeders cannot be negative")
     words = WORD.findall(q.lower())
+    ordering = {
+        "discovered_desc": "r.discovered_at DESC",
+        "size_desc": "r.size_bytes IS NULL, r.size_bytes DESC, r.discovered_at DESC",
+        "size_asc": "r.size_bytes IS NULL, r.size_bytes ASC, r.discovered_at DESC",
+        "seeders_desc": "r.seeders IS NULL, r.seeders DESC, r.discovered_at DESC",
+        "seeders_asc": "r.seeders IS NULL, r.seeders ASC, r.discovered_at DESC",
+        "created_desc": "r.torrent_created_at IS NULL, r.torrent_created_at DESC, r.discovered_at DESC",
+        "created_asc": "r.torrent_created_at IS NULL, r.torrent_created_at ASC, r.discovered_at DESC",
+    }
+    if sort not in ordering:
+        raise HTTPException(422, "Unknown result sort")
+    filters: list[str] = []
+    params: list[Any] = []
+    if min_size_bytes:
+        filters.append("r.size_bytes >= ?")
+        params.append(min_size_bytes)
+    if max_size_bytes is not None:
+        filters.append("r.size_bytes < ?")
+        params.append(max_size_bytes)
+    if min_seeders:
+        filters.append("COALESCE(r.seeders, 0) >= ?")
+        params.append(min_seeders)
     with connect() as db:
         if not words:
-            rows = db.execute("SELECT * FROM results ORDER BY discovered_at DESC LIMIT ?", (limit,)).fetchall()
+            sql = "SELECT r.* FROM results r"
         else:
             # Every token is mandatory. Field-scoping defaults this to title-only.
             field = "title" if not include_description else "{title description}"
             fts_query = " AND ".join(f'{field}:"{word.replace(chr(34), "")}"' for word in words)
-            rows = db.execute(
-                """SELECT r.* FROM results_fts f JOIN results r ON r.id=f.rowid
-                   WHERE results_fts MATCH ? ORDER BY rank LIMIT ?""", (fts_query, limit)
-            ).fetchall()
+            sql = "SELECT r.* FROM results_fts f JOIN results r ON r.id=f.rowid WHERE results_fts MATCH ?"
+            params.insert(0, fts_query)
+        if filters:
+            sql += (" WHERE " if " WHERE " not in sql else " AND ") + " AND ".join(filters)
+        sql += f" ORDER BY {ordering[sort]} LIMIT ?"
+        rows = db.execute(sql, (*params, limit)).fetchall()
     return [dict(row) for row in rows]

@@ -136,12 +136,24 @@ async function refreshAll() { await Promise.all([refreshAdapters(), refreshSourc
 
 async function searchLocal() {
   const rawQuery = $('#local-query').value.trim(); const list = $('#results');
-  if (!rawQuery) { list.replaceChildren(); status(''); return; }
-  const results = await api(`/api/results?q=${encodeURIComponent(rawQuery)}&include_description=${$('#include-description').checked}`);
+  const ranges = {
+    all: [0, null], small: [0, 4], 'movie-standard': [4, 12], 'movie-large': [12, 30], 'movie-huge': [30, null],
+    'series-compact': [4, 25], 'series-standard': [25, 80], 'series-large': [80, null]
+  };
+  let [minGb, maxGb] = ranges[$('#size-filter').value] || [0, null];
+  if ($('#size-filter').value === 'custom') {
+    minGb = Number($('#min-size-gb').value || 0); const rawMax = $('#max-size-gb').value;
+    maxGb = rawMax === '' ? null : Number(rawMax);
+  }
+  if (minGb < 0 || (maxGb !== null && (maxGb < 0 || maxGb < minGb))) { status('Enter a valid custom size range.'); return; }
+  const gib = 1024 ** 3;
+  const params = new URLSearchParams({q: rawQuery, include_description: $('#include-description').checked, min_size_bytes: String(Math.round(minGb * gib)), min_seeders: $('#seeder-filter').value, sort: $('#sort-results').value});
+  if (maxGb !== null) params.set('max_size_bytes', String(Math.round(maxGb * gib)));
+  const results = await api(`/api/results?${params}`);
   list.replaceChildren();
   for (const result of results) {
-    const node = $('#result-template').content.cloneNode(true); const link = node.querySelector('.title'); link.href = result.details_url; link.textContent = result.title;
-    node.querySelector('.metadata').textContent = [result.category, result.size, `↑ ${result.seeders ?? '—'}`, `↓ ${result.leechers ?? '—'}`].filter(Boolean).join(' · ');
+    const node = $('#result-template').content.cloneNode(true); const link = node.querySelector('.title'); link.href = result.details_url; link.textContent = result.title; link.title = result.title;
+    node.querySelector('.metadata').textContent = [result.category, result.size, `↑ ${result.seeders ?? '—'}`, `↓ ${result.leechers ?? '—'}`, result.torrent_created_at ? `torrent date ${result.torrent_created_at}` : 'torrent date unknown'].filter(Boolean).join(' · ');
     const magnet = node.querySelector('.magnet'); const fetchButton = node.querySelector('.fetch-magnet');
     const qbitAction = node.querySelector('.qbit-action'); const locationPicker = node.querySelector('.qbit-location'); const locationSelect = locationPicker.querySelector('select');
     const showQbittorrent = () => {
@@ -149,17 +161,36 @@ async function searchLocal() {
       qbitAction.hidden = false; locationSelect.replaceChildren(...qbittorrent.locations.map(location => new Option(location.label, location.label)));
       qbitAction.querySelector('.show-qbit').onclick = () => { locationPicker.hidden = false; };
       qbitAction.querySelector('.confirm-qbit').onclick = async () => {
-        const button = qbitAction.querySelector('.confirm-qbit'); button.disabled = true; button.textContent = 'Adding…';
+        const button = qbitAction.querySelector('.confirm-qbit'); button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Adding…';
         try { await api(`/api/results/${result.id}/qbittorrent`, {method: 'POST', body: JSON.stringify({location_label: locationSelect.value})}); button.textContent = 'Added'; status(`Added to qBittorrent (${locationSelect.value}).`); }
         catch (error) { button.disabled = false; button.textContent = 'Add'; status(error.message); }
       };
     };
-    const showMagnet = (link, button) => { magnet.href = link; magnet.textContent = 'Magnet link: open'; magnet.hidden = false; button?.remove(); showQbittorrent(); };
+    const showMagnet = (magnetLink, button) => { magnet.href = magnetLink; magnet.hidden = false; button?.remove(); };
+    showQbittorrent();
     if (result.magnet_link) showMagnet(result.magnet_link, fetchButton);
     else { const button = fetchButton; button.onclick = async () => { const original = button.textContent; button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Fetching…'; try { const data = await api(`/api/results/${result.id}/magnet`, {method: 'POST'}); if (data.magnet_link) { showMagnet(data.magnet_link, button); status('Magnet link fetched.'); } else { button.textContent = 'No magnet link found'; status('The detail page did not contain a magnet link.'); } } catch (error) { button.disabled = false; button.textContent = original; status(error.message); } }; }
     node.querySelector('.query').textContent = `Collected from “${result.remote_query}” · ${result.discovered_at}`; list.append(node);
   }
+  $('#result-tools').hidden = !results.length;
+  updateFilterLabels();
   status(`${results.length} locally matching result${results.length === 1 ? '' : 's'}.`);
+}
+
+function updateFilterLabels() {
+  const size = $('#size-filter'); const seeders = $('#seeder-filter');
+  if (size.value === 'all') $('#size-summary').textContent = 'Size';
+  else if (size.value === 'custom') {
+    const min = $('#min-size-gb').value || '0'; const max = $('#max-size-gb').value;
+    $('#size-summary').textContent = `Size: ${min}${max ? `–${max}` : '+'} GB`;
+  } else $('#size-summary').textContent = `Size: ${size.options[size.selectedIndex].text}`;
+  $('#seeder-summary').textContent = seeders.value === '0' ? 'Availability' : `Availability: ${seeders.options[seeders.selectedIndex].text}`;
+}
+
+function refreshFilteredResults() { if ($('#results').childElementCount) searchLocal().catch(error => status(error.message)); }
+
+function openCustomSizeDialog() {
+  $('#custom-size-error').textContent = ''; $('#custom-size-dialog').showModal();
 }
 
 function openSourceDialog(source = null) {
@@ -218,6 +249,17 @@ $('#queue-search').onclick = async () => {
 };
 $('#local-search').onclick = () => searchLocal().catch(error => status(error.message));
 $('#local-query').addEventListener('keydown', event => { if (event.key === 'Enter') searchLocal().catch(error => status(error.message)); });
+$('#size-filter').onchange = () => { if ($('#size-filter').value === 'custom') openCustomSizeDialog(); else refreshFilteredResults(); };
+$('#seeder-filter').onchange = refreshFilteredResults;
+$('#sort-results').onchange = refreshFilteredResults;
+$('#clear-size').onclick = () => { $('#size-filter').value = 'all'; $('#min-size-gb').value = ''; $('#max-size-gb').value = ''; refreshFilteredResults(); };
+$('#clear-seeders').onclick = () => { $('#seeder-filter').value = '0'; refreshFilteredResults(); };
+$('#close-custom-size').onclick = $('#cancel-custom-size').onclick = () => { if (!$('#min-size-gb').value && !$('#max-size-gb').value) $('#size-filter').value = 'all'; $('#custom-size-dialog').close(); updateFilterLabels(); };
+$('#custom-size-form').onsubmit = (event) => {
+  event.preventDefault(); const min = Number($('#min-size-gb').value || 0); const maxRaw = $('#max-size-gb').value; const max = maxRaw === '' ? null : Number(maxRaw);
+  if (min < 0 || (max !== null && (max < 0 || max < min))) { $('#custom-size-error').textContent = 'Enter a valid size range.'; return; }
+  $('#size-filter').value = 'custom'; $('#custom-size-dialog').close(); refreshFilteredResults();
+};
 $('#auth-form').onsubmit = async (event) => {
   event.preventDefault(); const username = $('#auth-username').value; const password = $('#auth-password').value;
   if (needsSetup && password !== $('#auth-confirm').value) { $('#auth-error').textContent = 'Passwords do not match.'; return; }
