@@ -137,8 +137,8 @@ async function refreshAll() { await Promise.all([refreshAdapters(), refreshSourc
 async function searchLocal() {
   const rawQuery = $('#local-query').value.trim(); const list = $('#results');
   const ranges = {
-    all: [0, null], small: [0, 4], 'movie-standard': [4, 12], 'movie-large': [12, 30], 'movie-huge': [30, null],
-    'series-compact': [4, 25], 'series-standard': [25, 80], 'series-large': [80, null]
+    all: [0, null], small: [0, 4], 'movie-standard': [4, 10], 'movie-large': [8, 16], 'movie-huge': [16, null],
+    'series-compact': [10, 30], 'series-standard': [20, 50], 'series-large': [50, null]
   };
   let [minGb, maxGb] = ranges[$('#size-filter').value] || [0, null];
   if ($('#size-filter').value === 'custom') {
@@ -155,20 +155,20 @@ async function searchLocal() {
     const node = $('#result-template').content.cloneNode(true); const link = node.querySelector('.title'); link.href = result.details_url; link.textContent = result.title; link.title = result.title;
     node.querySelector('.metadata').textContent = [result.category, result.size, `↑ ${result.seeders ?? '—'}`, `↓ ${result.leechers ?? '—'}`, result.torrent_created_at ? `torrent date ${result.torrent_created_at}` : 'torrent date unknown'].filter(Boolean).join(' · ');
     const magnet = node.querySelector('.magnet'); const fetchButton = node.querySelector('.fetch-magnet');
-    const qbitAction = node.querySelector('.qbit-action'); const locationPicker = node.querySelector('.qbit-location'); const locationSelect = locationPicker.querySelector('select');
+    const qbitAction = node.querySelector('.qbit-action'); const locationSelect = qbitAction.querySelector('select');
     const showQbittorrent = () => {
       if (!qbittorrent.configured) return;
       qbitAction.hidden = false; locationSelect.replaceChildren(...qbittorrent.locations.map(location => new Option(location.label, location.label)));
-      qbitAction.querySelector('.show-qbit').onclick = () => { locationPicker.hidden = false; };
       qbitAction.querySelector('.confirm-qbit').onclick = async () => {
-        const button = qbitAction.querySelector('.confirm-qbit'); button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Adding…';
-        try { await api(`/api/results/${result.id}/qbittorrent`, {method: 'POST', body: JSON.stringify({location_label: locationSelect.value})}); button.textContent = 'Added'; status(`Added to qBittorrent (${locationSelect.value}).`); }
-        catch (error) { button.disabled = false; button.textContent = 'Add'; status(error.message); }
+        const button = qbitAction.querySelector('.confirm-qbit'); button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Downloading…';
+        try { await api(`/api/results/${result.id}/qbittorrent`, {method: 'POST', body: JSON.stringify({location_label: locationSelect.value})}); button.textContent = 'Downloaded'; status(`Sent to qBittorrent (${locationSelect.value}).`); }
+        catch (error) { button.disabled = false; button.textContent = 'Download'; status(error.message); }
       };
     };
     const showMagnet = (magnetLink, button) => { magnet.href = magnetLink; magnet.hidden = false; button?.remove(); };
     showQbittorrent();
-    if (result.magnet_link) showMagnet(result.magnet_link, fetchButton);
+    if (qbittorrent.configured) fetchButton.remove();
+    else if (result.magnet_link) showMagnet(result.magnet_link, fetchButton);
     else { const button = fetchButton; button.onclick = async () => { const original = button.textContent; button.disabled = true; button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Fetching…'; try { const data = await api(`/api/results/${result.id}/magnet`, {method: 'POST'}); if (data.magnet_link) { showMagnet(data.magnet_link, button); status('Magnet link fetched.'); } else { button.textContent = 'No magnet link found'; status('The detail page did not contain a magnet link.'); } } catch (error) { button.disabled = false; button.textContent = original; status(error.message); } }; }
     node.querySelector('.query').textContent = `Collected from “${result.remote_query}” · ${result.discovered_at}`; list.append(node);
   }
@@ -249,16 +249,17 @@ $('#queue-search').onclick = async () => {
 };
 $('#local-search').onclick = () => searchLocal().catch(error => status(error.message));
 $('#local-query').addEventListener('keydown', event => { if (event.key === 'Enter') searchLocal().catch(error => status(error.message)); });
-$('#size-filter').onchange = () => { if ($('#size-filter').value === 'custom') openCustomSizeDialog(); else refreshFilteredResults(); };
-$('#seeder-filter').onchange = refreshFilteredResults;
+function closeFilter(control) { control.closest('details').open = false; }
+$('#size-filter').onchange = () => { if ($('#size-filter').value === 'custom') openCustomSizeDialog(); else { closeFilter($('#size-filter')); refreshFilteredResults(); } };
+$('#seeder-filter').onchange = () => { closeFilter($('#seeder-filter')); refreshFilteredResults(); };
 $('#sort-results').onchange = refreshFilteredResults;
-$('#clear-size').onclick = () => { $('#size-filter').value = 'all'; $('#min-size-gb').value = ''; $('#max-size-gb').value = ''; refreshFilteredResults(); };
-$('#clear-seeders').onclick = () => { $('#seeder-filter').value = '0'; refreshFilteredResults(); };
+$('#clear-size').onclick = () => { $('#size-filter').value = 'all'; $('#min-size-gb').value = ''; $('#max-size-gb').value = ''; closeFilter($('#size-filter')); refreshFilteredResults(); };
+$('#clear-seeders').onclick = () => { $('#seeder-filter').value = '0'; closeFilter($('#seeder-filter')); refreshFilteredResults(); };
 $('#close-custom-size').onclick = $('#cancel-custom-size').onclick = () => { if (!$('#min-size-gb').value && !$('#max-size-gb').value) $('#size-filter').value = 'all'; $('#custom-size-dialog').close(); updateFilterLabels(); };
 $('#custom-size-form').onsubmit = (event) => {
   event.preventDefault(); const min = Number($('#min-size-gb').value || 0); const maxRaw = $('#max-size-gb').value; const max = maxRaw === '' ? null : Number(maxRaw);
   if (min < 0 || (max !== null && (max < 0 || max < min))) { $('#custom-size-error').textContent = 'Enter a valid size range.'; return; }
-  $('#size-filter').value = 'custom'; $('#custom-size-dialog').close(); refreshFilteredResults();
+  $('#size-filter').value = 'custom'; $('#custom-size-dialog').close(); closeFilter($('#size-filter')); refreshFilteredResults();
 };
 $('#auth-form').onsubmit = async (event) => {
   event.preventDefault(); const username = $('#auth-username').value; const password = $('#auth-password').value;
