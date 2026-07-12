@@ -106,7 +106,7 @@ async function deleteTask(job) {
 function populateActivePreview() {
     const list = $('#active-tasks');
     list.replaceChildren();
-    const visible = jobs.filter(job => job.status === 'running').slice(0, 4);
+    const visible = jobs.filter(job => job.state === 'running').slice(0, 4);
 
     if (!visible.length) {
         const idleOperation = document.createElement('div');
@@ -207,10 +207,11 @@ function refreshCrawlDialog() {
 async function showRequestDetails(jobId) {
     try {
         const requests = await api(`/api/jobs/${jobId}/requests`);
-        const panel = document.createElement('section');
+        const panel = document.createElement('dialog');
         panel.className = 'request-log';
         panel.innerHTML = `<div><h3>Request details · task #${jobId}</h3><button>Close</button></div>`;
-        panel.querySelector('button').onclick = () => panel.remove();
+        panel.querySelector('button').onclick = () => panel.close();
+        panel.addEventListener('close', () => panel.remove(), {once: true});
         const list = document.createElement('div');
         for (const request of requests) {
             const entry = document.createElement('p');
@@ -221,6 +222,7 @@ async function showRequestDetails(jobId) {
         if (!requests.length) list.textContent = 'No requests have been made yet.';
         panel.append(list);
         document.body.append(panel);
+        panel.showModal();
     } catch (error) {
         status(error.message);
     }

@@ -582,9 +582,8 @@ textarea {
 }
 
 .request-log {
-    position: fixed;
-    z-index: 10;
-    inset: 8vh 8vw;
+    width: min(900px, calc(100vw - 28px));
+    max-height: 84vh;
     overflow: auto;
     padding: 22px;
     background: #101814;
