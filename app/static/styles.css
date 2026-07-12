@@ -52,14 +52,13 @@ h2, h3 {
 
 .topbar {
     display: grid;
-    grid-template-columns: 1fr 1fr;    
+    grid-template-columns: 1fr 1fr;
     gap: 28px;
     align-items: stretch;
 }
 
 .stats {
-    display: grid;
-    grid-template-columns:auto 1fr;
+    display: flex;
     gap: 14px;
     padding: 16px;
     background: #15201a;
@@ -69,18 +68,38 @@ h2, h3 {
 }
 
 
-.stats > div {
+.stats > div, .stat-action {
     display: grid;
     align-content: start;
     gap: 3px;
+    min-width: 64px;
 }
 
-.stats > div strong {
+.stats > div strong, .stat-action strong {
     font-size: 1.7rem;
     color: #8ce5a1;
 }
 
-.task-preview > div:last-child {
+.stat-action {
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    text-align: left;
+}
+
+.task-preview {
+    display: grid;
+    min-width: min(410px, 42vw);
+    padding: 16px;
+    background: #15201a;
+    border: 1px solid #2b3a31;
+    border-radius: 14px;
+    align-content: center;
+}
+
+#active-tasks {
+    display: grid;
     gap: 6px;
     color: #aab8ad;
     font-size: .79rem;
@@ -91,6 +110,25 @@ h2, h3 {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+}
+
+.mini-task .spinner {
+    flex: 0 0 auto;
+    margin: 0;
+}
+
+.idle-state {
+    color: #8ce5a1;
+    font-size: 1.7rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: .04em;
+}
+
+.idle-operation {
+    display: grid;
+    align-content: start;
+    gap: 3px;
 }
 
 .mini-task span {
@@ -126,12 +164,63 @@ h2, h3 {
     font-size: .78rem;
 }
 
+.account .logout-button {
+    display: grid;
+    width: 30px;
+    min-width: 30px;
+    padding: 5px;
+    border-color: transparent;
+    background: transparent;
+    color: #9dbca0;
+    place-items: center;
+}
+
+.account .logout-button:hover,
+.account .logout-button:focus-visible {
+    color: #8ce5a1;
+}
+
+.account .settings-button {
+    display: grid;
+    width: 36px;
+    min-width: 36px;
+    padding: 6px;
+    place-items: center;
+}
+
+.settings-button svg,
+.logout-button svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 2;
+}
+
 .panel {
+    position: relative;
     background: #18211d;
     border: 1px solid #2b3a31;
     border-radius: 14px;
     padding: 20px;
     margin-top: 22px;
+}
+
+.step-number {
+    position: absolute;
+    top: 12px;
+    left: -52px;
+    color: #8ce5a1;
+    font-size: 3.5rem;
+    font-weight: 800;
+    line-height: 1;
+    opacity: .7;
+}
+
+.workflow-panel {
+    margin-left: 52px;
 }
 
 .controls {
@@ -187,7 +276,7 @@ button.primary {
 
 .local-search {
     display: grid;
-    grid-template-columns:auto minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 14px;
     align-items: end;
 }
@@ -200,15 +289,6 @@ button.primary {
     min-width: 0;
 }
 
-.check {
-    display: flex;
-    align-items: center;
-    white-space: nowrap;
-}
-
-.check input {
-    min-height: auto;
-}
 
 .result-tools {
     display: flex;
@@ -433,7 +513,7 @@ dialog::backdrop {
     background: #000a;
 }
 
-dialog form, .download-error-dialog {
+dialog form, .download-error-dialog, .crawl-dialog-content {
     display: grid;
     gap: 15px;
     padding: 22px;
@@ -454,6 +534,20 @@ dialog footer {
 .download-error-dialog > p {
     margin: 0;
     color: #ffcf8a;
+}
+
+.crawl-dialog-content {
+    max-height: min(70vh, 760px);
+}
+
+.crawl-dialog-content .jobs {
+    display: grid;
+    gap: 10px;
+    overflow: auto;
+}
+
+.crawl-dialog-content .jobs article {
+    padding: 17px;
 }
 
 .adapter-field {
@@ -630,8 +724,19 @@ textarea {
         grid-template-columns:1fr 1fr;
     }
 
-    .local-search > div:first-child, .local-search .grow {
+    .local-search .grow {
         grid-column: span 2;
+    }
+
+    .workflow-panel {
+        margin-left: 38px;
+        padding-top: 20px;
+    }
+
+    .step-number {
+        top: 12px;
+        left: -38px;
+        font-size: 2.5rem;
     }
 
     .controls {

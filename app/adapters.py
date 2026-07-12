@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 ADAPTER_DIR = Path(__file__).parent.parent / "adapters"
 DEFAULT_ADAPTER_PATH = Path(__file__).parent / "default_adapter.json"
 
@@ -78,11 +77,15 @@ def get_adapter_definition(adapter_id: str) -> dict[str, Any]:
     return get_adapter(adapter_id)
 
 
-def save_adapter(adapter: dict[str, Any], existing_id: str | None = None) -> dict[str, Any]:
+def save_adapter(
+    adapter: dict[str, Any], existing_id: str | None = None
+) -> dict[str, Any]:
     validate_adapter(adapter)
     adapter_id = adapter["id"]
     if not adapter_id.replace("_", "").replace("-", "").isalnum():
-        raise AdapterError("Adapter id may contain only letters, numbers, hyphens, and underscores")
+        raise AdapterError(
+            "Adapter id may contain only letters, numbers, hyphens, and underscores"
+        )
     if existing_id is not None and adapter_id != existing_id:
         raise AdapterError("Adapter id cannot be changed while editing")
     path = ADAPTER_DIR / f"{adapter_id}.json"
@@ -105,4 +108,6 @@ def validate_adapter(adapter: dict[str, Any]) -> None:
         if not isinstance(adapter["result"]["fields"], dict):
             raise AdapterError("result.fields must be an object")
     except KeyError as error:
-        raise AdapterError(f"Missing required adapter property: {error.args[0]}") from error
+        raise AdapterError(
+            f"Missing required adapter property: {error.args[0]}"
+        ) from error

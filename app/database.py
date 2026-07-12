@@ -7,7 +7,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-
 DB_PATH = Path(os.getenv("RESEARCH_INDEX_DB", "data/research-index.sqlite"))
 
 
@@ -25,10 +24,10 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 def initialise() -> None:
     from .adapters import ensure_default_adapter
+
     ensure_default_adapter()
     with connect() as db:
-        db.executescript(
-            """
+        db.executescript("""
             PRAGMA journal_mode = WAL;
 
             CREATE TABLE IF NOT EXISTS sources (
@@ -151,16 +150,21 @@ def initialise() -> None:
               INSERT INTO results_fts(results_fts, rowid, title, description) VALUES ('delete', old.id, old.title, old.description);
               INSERT INTO results_fts(rowid, title, description) VALUES (new.id, new.title, new.description);
             END;
-            """
-        )
+            """)
         _migrate_crawl_jobs(db)
         _migrate_additive_columns(db)
         _backfill_result_sizes(db)
         _backfill_legacy_progress(db)
-        db.execute("CREATE INDEX IF NOT EXISTS crawl_jobs_ready ON crawl_jobs(status, run_after)")
-        db.execute("CREATE INDEX IF NOT EXISTS results_size_bytes ON results(size_bytes)")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS crawl_jobs_ready ON crawl_jobs(status, run_after)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS results_size_bytes ON results(size_bytes)"
+        )
         db.execute("CREATE INDEX IF NOT EXISTS results_seeders ON results(seeders)")
-        db.execute("CREATE INDEX IF NOT EXISTS results_torrent_created_at ON results(torrent_created_at)")
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS results_torrent_created_at ON results(torrent_created_at)"
+        )
 
 
 def _migrate_crawl_jobs(db: sqlite3.Connection) -> None:
@@ -172,8 +176,7 @@ def _migrate_crawl_jobs(db: sqlite3.Connection) -> None:
         return
     db.execute("DROP INDEX IF EXISTS crawl_jobs_ready")
     db.execute("ALTER TABLE crawl_jobs RENAME TO crawl_jobs_legacy")
-    db.execute(
-        """CREATE TABLE crawl_jobs (
+    db.execute("""CREATE TABLE crawl_jobs (
           id INTEGER PRIMARY KEY,
           source_id INTEGER NOT NULL REFERENCES sources(id),
           query TEXT NOT NULL,
@@ -186,8 +189,7 @@ def _migrate_crawl_jobs(db: sqlite3.Connection) -> None:
           next_page INTEGER NOT NULL DEFAULT 1,
           pages_crawled INTEGER NOT NULL DEFAULT 0,
           results_found INTEGER NOT NULL DEFAULT 0
-        )"""
-    )
+        )""")
     db.execute(
         """INSERT INTO crawl_jobs(id, source_id, query, status, attempt_count, run_after, last_error, created_at, completed_at)
            SELECT id, source_id, query, status, attempt_count, run_after, last_error, created_at, completed_at
@@ -198,36 +200,49 @@ def _migrate_crawl_jobs(db: sqlite3.Connection) -> None:
 
 def _backfill_legacy_progress(db: sqlite3.Connection) -> None:
     """Give completed searches created before pagination useful initial progress values."""
-    db.execute("UPDATE crawl_jobs SET pages_crawled=1 WHERE status='complete' AND pages_crawled=0")
     db.execute(
-        """UPDATE crawl_jobs AS job SET results_found=(
+        "UPDATE crawl_jobs SET pages_crawled=1 WHERE status='complete' AND pages_crawled=0"
+    )
+    db.execute("""UPDATE crawl_jobs AS job SET results_found=(
              SELECT COUNT(*) FROM results
              WHERE source_id=job.source_id AND remote_query=job.query
            )
-           WHERE status='complete' AND results_found=0"""
-    )
+           WHERE status='complete' AND results_found=0""")
     db.execute("UPDATE crawl_jobs SET page_complete=1 WHERE status='complete'")
 
 
 def _migrate_additive_columns(db: sqlite3.Connection) -> None:
     """Add non-breaking fields to databases created before adaptive pacing."""
-    if _add_column_if_missing(db, "sources", "current_delay_seconds", "INTEGER NOT NULL DEFAULT 20"):
+    if _add_column_if_missing(
+        db, "sources", "current_delay_seconds", "INTEGER NOT NULL DEFAULT 20"
+    ):
         db.execute("UPDATE sources SET current_delay_seconds=min_delay_seconds")
-    _add_column_if_missing(db, "sources", "successful_requests", "INTEGER NOT NULL DEFAULT 0")
-    _add_column_if_missing(db, "sources", "kind", "TEXT NOT NULL DEFAULT 'unconfigured'")
+    _add_column_if_missing(
+        db, "sources", "successful_requests", "INTEGER NOT NULL DEFAULT 0"
+    )
+    _add_column_if_missing(
+        db, "sources", "kind", "TEXT NOT NULL DEFAULT 'unconfigured'"
+    )
     # If exactly one adapter exists, preserve legacy sources by assigning it generically.
     from .adapters import load_adapters
+
     available = load_adapters()
     if len(available) == 1:
         adapter_id = next(iter(available))
         db.execute("UPDATE sources SET kind=? WHERE kind<>?", (adapter_id, adapter_id))
-    _add_column_if_missing(db, "crawl_jobs", "page_complete", "INTEGER NOT NULL DEFAULT 0")
-    if _add_column_if_missing(db, "crawl_jobs", "matches_seen", "INTEGER NOT NULL DEFAULT 0"):
+    _add_column_if_missing(
+        db, "crawl_jobs", "page_complete", "INTEGER NOT NULL DEFAULT 0"
+    )
+    if _add_column_if_missing(
+        db, "crawl_jobs", "matches_seen", "INTEGER NOT NULL DEFAULT 0"
+    ):
         db.execute("UPDATE crawl_jobs SET matches_seen=results_found")
     _add_column_if_missing(db, "results", "magnet_link", "TEXT")
     _add_column_if_missing(db, "results", "size_bytes", "INTEGER")
     _add_column_if_missing(db, "results", "torrent_created_at", "TEXT")
-    _add_column_if_missing(db, "detail_tasks", "on_demand", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(
+        db, "detail_tasks", "on_demand", "INTEGER NOT NULL DEFAULT 0"
+    )
     db.execute("UPDATE detail_tasks SET on_demand=0 WHERE on_demand=1")
     db.execute("UPDATE crawl_jobs SET status='stopped' WHERE status='paused'")
 
@@ -235,17 +250,26 @@ def _migrate_additive_columns(db: sqlite3.Connection) -> None:
 def _backfill_result_sizes(db: sqlite3.Connection) -> None:
     """Make stored size text from earlier crawls immediately filterable, locally."""
     factors = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
-    for row in db.execute("SELECT id, size FROM results WHERE size_bytes IS NULL AND size IS NOT NULL"):
-        match = re.search(r"([0-9]+(?:[.,][0-9]+)?)\s*([KMGT]?i?B)", row["size"], flags=re.IGNORECASE)
+    for row in db.execute(
+        "SELECT id, size FROM results WHERE size_bytes IS NULL AND size IS NOT NULL"
+    ):
+        match = re.search(
+            r"([0-9]+(?:[.,][0-9]+)?)\s*([KMGT]?i?B)", row["size"], flags=re.IGNORECASE
+        )
         if not match:
             continue
         unit = match.group(2).upper().replace("I", "")
         if unit in factors:
             value = float(match.group(1).replace(",", "."))
-            db.execute("UPDATE results SET size_bytes=? WHERE id=?", (round(value * factors[unit]), row["id"]))
+            db.execute(
+                "UPDATE results SET size_bytes=? WHERE id=?",
+                (round(value * factors[unit]), row["id"]),
+            )
 
 
-def _add_column_if_missing(db: sqlite3.Connection, table: str, name: str, definition: str) -> bool:
+def _add_column_if_missing(
+    db: sqlite3.Connection, table: str, name: str, definition: str
+) -> bool:
     columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
     if name in columns:
         return False

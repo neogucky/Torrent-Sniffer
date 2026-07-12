@@ -106,13 +106,34 @@ async function deleteTask(job) {
 function populateActivePreview() {
     const list = $('#active-tasks');
     list.replaceChildren();
-    const visible = jobs.filter(job => job.state === 'running').slice(0, 4);
+    const visible = jobs.filter(job => job.status === 'running').slice(0, 4);
+
+    if (!visible.length) {
+        const idleOperation = document.createElement('div');
+        idleOperation.className = 'idle-operation';
+        const caption = document.createElement('p');
+        caption.className = 'eyebrow';
+        caption.textContent = 'OPERATIONS';
+        const idle = document.createElement('strong');
+        idle.className = 'idle-state';
+        idle.textContent = 'IDLE';
+        idleOperation.append(caption, idle);
+        list.append(idleOperation);
+        return;
+    }
+
     for (const job of visible) {
         const item = document.createElement('div');
         item.className = `mini-task ${job.state}`;
+
+        const spinner = document.createElement('span');
+        spinner.className = 'spinner';
+        spinner.setAttribute('aria-label', 'Running');
+
         const info = document.createElement('span');
-        info.textContent = `${sourceName(job)} · p${job.next_page}`;
-        item.append(info);
+        info.textContent = `${sourceName(job)} · “${job.query}” · crawling page ${job.next_page}`;
+
+        item.append(spinner, info);
         item.append(actionButton('■', 'stop', job, 'icon-button'));
         list.append(item);
     }
@@ -152,9 +173,35 @@ function taskCard(job) {
 
 async function refreshJobs() {
     jobs = await api('/api/jobs');
-    $('#running-jobs').replaceChildren(...jobs.filter(job => job.state !== 'complete').map(taskCard));
-    $('#completed-jobs').replaceChildren(...jobs.filter(job => job.state === 'complete').map(taskCard));
     populateActivePreview();
+    refreshCrawlDialog();
+}
+
+function openCrawlDialog(mode) {
+    const activeOnly = mode === 'active';
+    $('#crawl-dialog-title').textContent = activeOnly ? 'Active crawls' : 'Crawls';
+    $('#crawl-dialog-copy').textContent = activeOnly
+        ? 'Running, stopped, and failed crawls.'
+        : 'All crawls, including completed ones.';
+    $('#crawl-dialog').dataset.mode = mode;
+    refreshCrawlDialog();
+    $('#crawl-dialog').showModal();
+}
+
+function refreshCrawlDialog() {
+    const dialog = $('#crawl-dialog');
+    if (!dialog.open && !dialog.dataset.mode) return;
+
+    const activeOnly = dialog.dataset.mode === 'active';
+    const visibleJobs = activeOnly ? jobs.filter(job => job.state !== 'complete') : jobs;
+    const list = $('#crawl-dialog-jobs');
+    list.replaceChildren(...visibleJobs.map(taskCard));
+    if (!visibleJobs.length) {
+        const empty = document.createElement('p');
+        empty.className = 'hint';
+        empty.textContent = activeOnly ? 'No active crawls.' : 'No crawls yet.';
+        list.append(empty);
+    }
 }
 
 async function showRequestDetails(jobId) {
@@ -223,7 +270,7 @@ async function searchLocal() {
     const gib = 1024 ** 3;
     const params = new URLSearchParams({
         q: rawQuery,
-        include_description: $('#include-description').checked,
+        match_mode: $('#match-mode').value,
         min_size_bytes: String(Math.round(minGb * gib)),
         min_seeders: $('#seeder-filter').value,
         sort: $('#sort-results').value
@@ -421,14 +468,16 @@ $('#adapter-form').onsubmit = async (event) => {
     }
 };
 $('#queue-search').onclick = async () => {
+    const query = $('#remote-query').value.trim();
     try {
         await api('/api/jobs', {
             method: 'POST',
-            body: JSON.stringify({source_id: Number($('#source-select').value), query: $('#remote-query').value})
+            body: JSON.stringify({source_id: Number($('#source-select').value), query})
         });
+        $('#local-query').value = query;
         $('#remote-query').value = '';
         await refreshAll();
-        status('Task started; requests will be paced.');
+        status('Crawl started; requests will be paced. The local query was updated.');
     } catch (error) {
         status(error.message);
     }
@@ -696,8 +745,13 @@ $('#remove-qbit').onclick = async () => {
         $('#qbit-error').textContent = error.message;
     }
 };
+$('#open-active').onclick = () => openCrawlDialog('active');
+$('#open-crawls').onclick = () => openCrawlDialog('all');
+$('#close-crawl-dialog').onclick = () => $('#crawl-dialog').close();
 initialiseApp();
 setInterval(() => {
-    if (currentUser) refreshJobs().catch(() => {
-    });
+    if (currentUser) {
+        Promise.all([refreshJobs(), refreshSummary()]).catch(() => {
+        });
+    }
 }, 5000);
