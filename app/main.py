@@ -24,7 +24,7 @@ from .adapters import (
     save_adapter,
 )
 from .crawler import fetch_magnet_now, run_one_job
-from .database import connect, initialise
+from .database import connect, initialise, search_terms
 from .qbittorrent import (
     add_magnet as add_to_qbittorrent,
     clear_config as clear_qbittorrent_config,
@@ -33,7 +33,6 @@ from .qbittorrent import (
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
-WORD = re.compile(r"[\w]+", re.UNICODE)
 USERNAME = re.compile(r"[A-Za-z0-9_.-]{3,32}\Z")
 SESSION_COOKIE = "torrent_sniffer_session"
 SESSION_DAYS = 14
@@ -687,7 +686,7 @@ def search_results(
         raise HTTPException(422, "Minimum seeders cannot be negative")
     if match_mode not in {"all", "any", "ordered"}:
         raise HTTPException(422, "Match mode must be all, any, or ordered")
-    words = WORD.findall(q.lower())
+    words = search_terms(q)
     ordering = {
         "discovered_desc": "r.discovered_at DESC",
         "size_desc": "r.size_bytes IS NULL, r.size_bytes DESC, r.discovered_at DESC",
@@ -714,15 +713,18 @@ def search_results(
         if not words:
             sql = "SELECT r.* FROM results r"
         else:
-            title_terms = [f'title:"{word}"' for word in words]
+            sql = "SELECT r.* FROM results r"
             if match_mode == "all":
-                fts_query = " AND ".join(title_terms)
+                conditions = ["search_contains(r.title, ?) = 1" for _ in words]
+                sql += " WHERE " + " AND ".join(conditions)
+                params = [*words, *params]
             elif match_mode == "any":
-                fts_query = " OR ".join(title_terms)
+                conditions = ["search_contains(r.title, ?) = 1" for _ in words]
+                sql += " WHERE " + " OR ".join(conditions)
+                params = [*words, *params]
             else:
-                fts_query = 'title:"' + " ".join(words) + '"'
-            sql = "SELECT r.* FROM results_fts f JOIN results r ON r.id=f.rowid WHERE results_fts MATCH ?"
-            params.insert(0, fts_query)
+                sql += " WHERE search_in_order(r.title, ?) = 1"
+                params = [q, *params]
         if filters:
             sql += (" WHERE " if " WHERE " not in sql else " AND ") + " AND ".join(
                 filters

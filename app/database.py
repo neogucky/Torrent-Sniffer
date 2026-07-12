@@ -8,6 +8,45 @@ from pathlib import Path
 from typing import Iterator
 
 DB_PATH = Path(os.getenv("RESEARCH_INDEX_DB", "data/research-index.sqlite"))
+SYMBOL_WORDS = {
+    "&": " and ",
+    "+": " plus ",
+    "@": " at ",
+    "%": " percent ",
+    "$": " dollar ",
+    "#": " number ",
+    "=": " equals ",
+    "*": " star ",
+}
+
+
+def search_terms(value: str) -> list[str]:
+    """Return searchable words after expanding commonly written symbols."""
+    normalised = value.casefold()
+    for symbol, word in SYMBOL_WORDS.items():
+        normalised = normalised.replace(symbol, word)
+    return re.findall(r"[\w]+", normalised, flags=re.UNICODE)
+
+
+def _contains_search_term(value: str | None, term: str | None) -> int:
+    if not value or not term:
+        return 0
+    pattern = rf"(?<!\w){re.escape(term.casefold())}(?!\w)"
+    normalised = " ".join(search_terms(value))
+    return int(bool(re.search(pattern, normalised, flags=re.UNICODE)))
+
+
+def _matches_in_order(value: str | None, query: str | None) -> int:
+    if not value or not query:
+        return 0
+    terms = search_terms(query)
+    if not terms:
+        return 0
+    normalised = value.casefold()
+    for symbol, word in SYMBOL_WORDS.items():
+        normalised = normalised.replace(symbol, word)
+    pattern = r"(?<!\w)" + r".{0,1}".join(re.escape(term) for term in terms) + r"(?!\w)"
+    return int(bool(re.search(pattern, normalised, flags=re.UNICODE)))
 
 
 @contextmanager
@@ -15,6 +54,8 @@ def connect() -> Iterator[sqlite3.Connection]:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
+    connection.create_function("search_contains", 2, _contains_search_term)
+    connection.create_function("search_in_order", 2, _matches_in_order)
     try:
         yield connection
         connection.commit()

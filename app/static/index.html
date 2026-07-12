@@ -30,9 +30,15 @@
             <button type="button" class="stat-action" id="open-active">
                 <p class="eyebrow">ACTIVE</p><strong id="active-crawls">0</strong>
             </button>
-            <button type="button" class="stat-action" id="open-crawls">
-                <p class="eyebrow">CRAWLS</p><strong id="total-crawls">0</strong>
-            </button>
+            <div class="crawl-stat">
+                <button type="button" class="stat-action" id="open-crawls">
+                    <p class="eyebrow">CRAWLS</p><strong id="total-crawls">0</strong>
+                </button>
+                <aside id="crawl-finish-popover" class="crawl-finish-popover" hidden aria-live="polite">
+                    <p id="crawl-finish-message"></p>
+                    <div id="crawl-finish-progress" class="crawl-finish-progress"></div>
+                </aside>
+            </div>
             <div>
                 <p class="eyebrow">TORRENTS</p><strong id="total-results">0</strong>
             </div>

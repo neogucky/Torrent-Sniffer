@@ -11,6 +11,9 @@ let editingUserId = null;
 let currentUser = null;
 let needsSetup = false;
 let qbittorrent = {configured: false, locations: []};
+let jobStates = new Map();
+let jobsLoaded = false;
+let crawlFinishTimer = null;
 
 async function api(path, options = {}) {
     const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
@@ -172,9 +175,36 @@ function taskCard(job) {
 }
 
 async function refreshJobs() {
-    jobs = await api('/api/jobs');
+    const nextJobs = await api('/api/jobs');
+    if (jobsLoaded) {
+        for (const job of nextJobs) {
+            if (job.state === 'complete' && jobStates.get(job.id) !== 'complete') {
+                showCrawlFinished(job);
+            }
+        }
+    }
+    jobStates = new Map(nextJobs.map(job => [job.id, job.state]));
+    jobsLoaded = true;
+    jobs = nextJobs;
     populateActivePreview();
     refreshCrawlDialog();
+}
+
+function showCrawlFinished(job) {
+    const popover = $('#crawl-finish-popover');
+    const progress = $('#crawl-finish-progress');
+    const plural = job.results_found === 1 ? '' : 's';
+    $('#crawl-finish-message').textContent = `Crawl for “${job.query}” finished with ${job.results_found} torrent${plural} found.`;
+
+    clearTimeout(crawlFinishTimer);
+    popover.hidden = false;
+    progress.style.animation = 'none';
+    void progress.offsetWidth;
+    progress.style.animation = '';
+
+    crawlFinishTimer = setTimeout(() => {
+        popover.hidden = true;
+    }, 10_000);
 }
 
 function openCrawlDialog(mode) {
