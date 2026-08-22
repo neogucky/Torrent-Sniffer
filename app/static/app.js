@@ -14,6 +14,7 @@ let qbittorrent = {configured: false, locations: []};
 let jobStates = new Map();
 let jobsLoaded = false;
 let crawlFinishTimer = null;
+let authRequestInFlight = false;
 
 async function api(path, options = {}) {
     const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
@@ -568,12 +569,15 @@ $('#custom-size-form').onsubmit = (event) => {
 $('#close-download-error').onclick = $('#dismiss-download-error').onclick = () => $('#download-error-dialog').close();
 $('#auth-form').onsubmit = async (event) => {
     event.preventDefault();
+    if (authRequestInFlight) return;
     const username = $('#auth-username').value;
     const password = $('#auth-password').value;
     if (needsSetup && password !== $('#auth-confirm').value) {
         $('#auth-error').textContent = 'Passwords do not match.';
         return;
     }
+    authRequestInFlight = true;
+    $('#auth-submit').disabled = true;
     try {
         const user = await api(needsSetup ? '/api/auth/setup' : '/api/auth/login', {
             method: 'POST',
@@ -582,6 +586,9 @@ $('#auth-form').onsubmit = async (event) => {
         await activateUser(user);
     } catch (error) {
         $('#auth-error').textContent = error.message;
+    } finally {
+        authRequestInFlight = false;
+        if ($('#auth-dialog').open) $('#auth-submit').disabled = false;
     }
 };
 $('#auth-dialog').addEventListener('cancel', event => event.preventDefault());

@@ -7,7 +7,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-DB_PATH = Path(os.getenv("RESEARCH_INDEX_DB", "data/research-index.sqlite"))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_configured_db_path = os.getenv("RESEARCH_INDEX_DB", "data/research-index.sqlite")
+DB_PATH = Path(_configured_db_path).expanduser()
+if not DB_PATH.is_absolute():
+    # Resolve the default (and relative explicit values) from the application
+    # root rather than the process working directory. Starting uvicorn from a
+    # different directory must not silently create a second database.
+    DB_PATH = (PROJECT_ROOT / DB_PATH).resolve()
 SYMBOL_WORDS = {
     "&": " and ",
     "+": " plus ",

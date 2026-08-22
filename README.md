@@ -18,7 +18,7 @@ python3 -m venv .venv
 .venv/bin/uvicorn app.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000`. Data is stored in `data/research-index.sqlite` by default. Set `RESEARCH_INDEX_DB` to choose another path.
+Open `http://127.0.0.1:8000`. Data is stored in `data/research-index.sqlite` by default. The default is resolved relative to the application directory, so starting the server from another working directory will still use the same data. Set `RESEARCH_INDEX_DB` to choose another path.
 
 ## Use
 

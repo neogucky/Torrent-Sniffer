@@ -35,7 +35,10 @@ def build_search_url(
         if search.get("query_encoding", "percent") == "percent"
         else query
     )
-    path = str(search["path_template"]).format(query=encoded_query, page=page)
+    page_offset = int(search.get("page_offset", 0))
+    path = str(search["path_template"]).format(
+        query=encoded_query, page=page + page_offset
+    )
     return urllib.parse.urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
 
 
@@ -61,6 +64,7 @@ class SearchTableParser(HTMLParser):
         self._row: list[dict[str, object]] | None = None
         self._cell: list[str] | None = None
         self._cell_class = ""
+        self._cell_nested_classes: set[str] = set()
         self._links: list[tuple[str | None, str]] = []
         self._anchor_href: str | None = None
         self._anchor_text: list[str] | None = None
@@ -72,10 +76,13 @@ class SearchTableParser(HTMLParser):
         elif tag == "td" and self._row is not None:
             self._cell = []
             self._cell_class = attrs_map.get("class", "")
+            self._cell_nested_classes = set()
             self._links = []
         elif tag == "a" and self._cell is not None:
             self._anchor_href = attrs_map.get("href")
             self._anchor_text = []
+        elif self._cell is not None and attrs_map.get("class"):
+            self._cell_nested_classes.update(attrs_map["class"].split())
 
     def handle_data(self, data: str) -> None:
         if self._cell is not None:
@@ -88,7 +95,9 @@ class SearchTableParser(HTMLParser):
             self._row.append(
                 {
                     "text": " ".join(self._cell).strip(),
-                    "class": self._cell_class,
+                    "class": " ".join(
+                        [self._cell_class, *sorted(self._cell_nested_classes)]
+                    ).strip(),
                     "links": self._links,
                 }
             )
@@ -121,13 +130,14 @@ def _field_value(
         if link:
             raw = link[0] if rule.get("value") == "href" else link[1]
     else:
-        cell = next(
-            (
-                item
-                for item in row
-                if str(rule.get("cell_class_contains", "")) in str(item["class"])
-            ),
-            None,
+        class_needle = str(rule.get("cell_class_contains", ""))
+        cell = (
+            next(
+                (item for item in row if class_needle in str(item["class"])),
+                None,
+            )
+            if class_needle
+            else None
         )
         if (
             cell is None
@@ -139,6 +149,12 @@ def _field_value(
             raw = str(cell["text"])
     if raw is None or not raw.strip():
         return None
+    raw = raw.replace("\xa0", " ")
+    if "text_regex" in rule:
+        match = re.search(str(rule["text_regex"]), raw, flags=re.IGNORECASE)
+        if not match:
+            return None
+        raw = match.group(1) if match.lastindex else match.group(0)
     if rule.get("as") == "integer":
         digits = re.sub(r"[^0-9]", "", raw)
         return int(digits) if digits else None
@@ -191,11 +207,24 @@ def parse_torrent_date(value: str) -> str | None:
         r"(\d{1,2})(?:st|nd|rd|th)", r"\1", cleaned, flags=re.IGNORECASE
     )
     normalised = normalised.replace(".", "").replace(",", "")
-    for fmt in ("%Y-%m-%d", "%d %b %Y", "%b %d %Y", "%b %d '%y", "%b %d %y"):
+    for fmt in (
+        "%Y-%m-%d",
+        "%d %b %Y",
+        "%b %d %Y",
+        "%b %d '%y",
+        "%b %d %y",
+    ):
         try:
             return datetime.strptime(normalised, fmt).date().isoformat()
         except ValueError:
             pass
+    try:
+        # TPB commonly omits the year for recent uploads, e.g. "01-18 17:41".
+        return datetime.strptime(
+            f"{today.year}-{normalised}", "%Y-%m-%d %H:%M"
+        ).date().isoformat()
+    except ValueError:
+        pass
     return None
 
 

@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import sqlite3
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -212,10 +213,17 @@ def setup_owner(credentials: Credentials, response: Response):
         if db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
             raise HTTPException(409, "An account already exists; use login instead")
         salt, password_hash = _new_password(credentials.password)
-        db.execute(
-            "INSERT INTO users(username, password_salt, password_hash, is_admin) VALUES (?, ?, ?, 1)",
-            (username, salt, password_hash),
-        )
+        try:
+            db.execute(
+                "INSERT INTO users(username, password_salt, password_hash, is_admin) VALUES (?, ?, ?, 1)",
+                (username, salt, password_hash),
+            )
+        except sqlite3.IntegrityError as error:
+            # Two setup submissions can race. Report the account-created state
+            # instead of turning the second request into a server error.
+            raise HTTPException(
+                409, "An account already exists; use login instead"
+            ) from error
         user = dict(
             db.execute("SELECT * FROM users WHERE id=last_insert_rowid()").fetchone()
         )
