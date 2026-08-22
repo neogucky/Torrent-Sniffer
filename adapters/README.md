@@ -5,6 +5,7 @@ Adapter JSON files describe how a source is searched and parsed. They are versio
 Each adapter has an `id`, `label`, a search URL template, a pagination-link pattern, field extraction rules, and a magnet-link pattern. The parser supports:
 
 - `page_offset`: adjust the app’s one-based page number for sources that start at zero.
+- `pagination.href_regex`: use a capturing group for the source page number; pages greater than the current source page are queued automatically.
 - `link_href_contains`: select an anchor by a stable portion of its `href`.
 - `cell_class_contains` with optional `fallback_index`: select a table cell.
 - `text_regex`: extract a capture group from the selected cell text.

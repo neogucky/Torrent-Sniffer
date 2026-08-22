@@ -298,7 +298,8 @@ def has_next_page(html: str, current_page: int, adapter: dict[str, Any]) -> bool
         str(adapter.get("pagination", {}).get("href_regex", "(?!)")), html
     )
     pages = [int(value) for value in matches if str(value).isdigit()]
-    return any(page > current_page for page in pages)
+    source_page = current_page + int(adapter.get("search", {}).get("page_offset", 0))
+    return any(page > source_page for page in pages)
 
 
 def parse_magnet_link(html: str, adapter: dict[str, Any]) -> str | None:
