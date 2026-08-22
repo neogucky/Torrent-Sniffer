@@ -17,6 +17,7 @@ let crawlFinishTimer = null;
 let authRequestInFlight = false;
 let excludedTerms = loadExcludedTerms();
 let hasLocalSearch = false;
+let debugEnabled = loadDebugEnabled();
 
 function loadExcludedTerms() {
     try {
@@ -33,6 +34,22 @@ function saveExcludedTerms() {
         localStorage.setItem('research-index-excluded-terms', JSON.stringify(excludedTerms));
     } catch {
         // The current session still uses the filters when storage is unavailable.
+    }
+}
+
+function loadDebugEnabled() {
+    try {
+        return localStorage.getItem('research-index-debug-enabled') === 'true';
+    } catch {
+        return false;
+    }
+}
+
+function saveDebugEnabled() {
+    try {
+        localStorage.setItem('research-index-debug-enabled', String(debugEnabled));
+    } catch {
+        // The current session still uses the setting when storage is unavailable.
     }
 }
 
@@ -226,6 +243,8 @@ function showCrawlFinished(job) {
     crawlFinishTimer = setTimeout(() => {
         popover.hidden = true;
     }, 10_000);
+
+    if (debugEnabled) showRequestDetails(job.id, true).catch(error => status(error.message));
 }
 
 function openCrawlDialog(mode) {
@@ -255,23 +274,47 @@ function refreshCrawlDialog() {
     }
 }
 
-async function showRequestDetails(jobId) {
+async function showRequestDetails(jobId, automatic = false) {
     try {
         const requests = await api(`/api/jobs/${jobId}/requests`);
         const panel = document.createElement('dialog');
         panel.className = 'request-log';
-        panel.innerHTML = `<div><h3>Request details · task #${jobId}</h3><button>Close</button></div>`;
+        panel.innerHTML = `<div class="request-log-content"><header><h3>${automatic ? 'Debug log' : 'Request details'} · task #${jobId}</h3><button type="button">Close</button></header></div>`;
         panel.querySelector('button').onclick = () => panel.close();
         panel.addEventListener('close', () => panel.remove(), {once: true});
-        const list = document.createElement('div');
+        const content = panel.querySelector('.request-log-content');
+        const groups = new Map();
         for (const request of requests) {
-            const entry = document.createElement('p');
-            const change = request.wait_adjustment_seconds ? ` (${request.wait_adjustment_seconds > 0 ? '+' : ''}${request.wait_adjustment_seconds}s)` : '';
-            entry.textContent = `${request.request_type} · ${request.status}${request.page ? ` · page ${request.page}` : ''} · wait ${request.wait_before_seconds}s → ${request.effective_wait_seconds}s${change} · ${request.url}${request.error ? ` · ${request.error}` : ''}`;
-            list.append(entry);
+            const key = request.request_type === 'search'
+                ? `Search page ${request.page ?? '?'}`
+                : 'Detail requests';
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(request);
         }
-        if (!requests.length) list.textContent = 'No requests have been made yet.';
-        panel.append(list);
+        const orderedGroups = [...groups.entries()].sort(([left], [right]) => {
+            if (left === 'Detail requests') return 1;
+            if (right === 'Detail requests') return -1;
+            return Number(left.match(/\d+/)?.[0] ?? 0) - Number(right.match(/\d+/)?.[0] ?? 0);
+        });
+        if (!orderedGroups.length) {
+            const empty = document.createElement('p');
+            empty.className = 'hint';
+            empty.textContent = 'No requests have been made yet.';
+            content.append(empty);
+        }
+        for (const [heading, group] of orderedGroups) {
+            const section = document.createElement('section');
+            const title = document.createElement('h4');
+            title.textContent = heading;
+            section.append(title);
+            for (const request of group) {
+                const entry = document.createElement('p');
+                const change = request.wait_adjustment_seconds ? ` (${request.wait_adjustment_seconds > 0 ? '+' : ''}${request.wait_adjustment_seconds}s)` : '';
+                entry.textContent = `${request.request_type} · ${request.status}${request.http_status ? ` · HTTP ${request.http_status}` : ''}${request.result_count !== null ? ` · ${request.result_count} result${request.result_count === 1 ? '' : 's'}` : ''} · wait ${request.wait_before_seconds}s → ${request.effective_wait_seconds}s${change} · ${request.url}${request.error ? ` · ${request.error}` : ''}`;
+                section.append(entry);
+            }
+            content.append(section);
+        }
         document.body.append(panel);
         panel.showModal();
     } catch (error) {
@@ -419,13 +462,25 @@ function updateFilterLabels() {
         $('#size-summary').textContent = `Size: ${min}${max ? `–${max}` : '+'} GB`;
     } else $('#size-summary').textContent = `Size: ${size.options[size.selectedIndex].text}`;
     $('#seeder-summary').textContent = seeders.value === '0' ? 'Availability' : `Availability: ${seeders.options[seeders.selectedIndex].text}`;
-    const excludeSummary = $('#exclude-summary');
-    if (!excludedTerms.length) excludeSummary.textContent = 'Exclude: none';
-    else if (excludedTerms.length === 1) excludeSummary.textContent = `Exclude: ${excludedTerms[0]}`;
-    else excludeSummary.textContent = `Exclude: ${excludedTerms[0]} +${excludedTerms.length - 1}`;
-    excludeSummary.parentElement.title = excludedTerms.length
-        ? `Excluded: ${excludedTerms.join(', ')}`
-        : 'No excluded words';
+    const pills = $('#exclude-pills');
+    pills.replaceChildren(...excludedTerms.map(term => {
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'exclude-pill';
+        pill.title = `Remove “${term}”`;
+        pill.innerHTML = `<span></span><b aria-hidden="true">×</b>`;
+        pill.querySelector('span').textContent = term;
+        pill.onclick = () => {
+            excludedTerms = excludedTerms.filter(item => item !== term);
+            saveExcludedTerms();
+            updateFilterLabels();
+            refreshFilteredResults();
+        };
+        return pill;
+    }));
+    $('#open-exclude-dialog').title = excludedTerms.length
+        ? `Edit excluded words: ${excludedTerms.join(', ')}`
+        : 'Add excluded words';
 }
 
 function refreshFilteredResults() {
@@ -743,6 +798,7 @@ async function openQbittorrentDialog() {
 $('#open-settings').onclick = async () => {
     $('#settings-error').textContent = '';
     $('#password-form').reset();
+    $('#debug-switch').checked = debugEnabled;
     const management = $('#user-management');
     const qbitManagement = $('#qbit-management');
     management.hidden = !currentUser?.is_admin;
@@ -759,6 +815,10 @@ $('#open-settings').onclick = async () => {
     }
 };
 $('#close-settings').onclick = () => $('#settings-dialog').close();
+$('#debug-switch').onchange = () => {
+    debugEnabled = $('#debug-switch').checked;
+    saveDebugEnabled();
+};
 $('#password-form').onsubmit = async (event) => {
     event.preventDefault();
     if ($('#new-password').value !== $('#confirm-new-password').value) {

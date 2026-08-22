@@ -117,10 +117,12 @@
             </optgroup>
         </select></label>
         <span class="result-tools-spacer"></span>
-        <button type="button" id="open-exclude-dialog" class="exclude-button" aria-label="Edit excluded matches" title="Edit excluded matches">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6 7v5l-4 2v-7L4 5z"></path></svg>
-            <span id="exclude-summary">Exclude: porn</span>
-        </button>
+        <div class="exclude-controls">
+            <div id="exclude-pills" class="exclude-pills"></div>
+            <button type="button" id="open-exclude-dialog" class="exclude-button" aria-label="Edit excluded matches" title="Edit excluded matches" aria-haspopup="dialog">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6 7v5l-4 2v-7L4 5z"></path></svg>
+            </button>
+        </div>
     </section>
     <section id="results" class="results"></section>
 </main>
@@ -195,6 +197,10 @@
                                    required></label>
                 <button>Change password</button>
             </form>
+        </section>
+        <section class="settings-section">
+            <label class="settings-toggle"><input id="debug-switch" type="checkbox"><span>Open debug log after crawls</span></label>
+            <p class="hint">When enabled, completed crawls open a request log grouped by search page.</p>
         </section>
         <section id="user-management" class="settings-section" hidden>
             <div class="settings-section-heading"><h3>Users</h3>
