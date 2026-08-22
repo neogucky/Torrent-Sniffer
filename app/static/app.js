@@ -463,6 +463,7 @@ function updateFilterLabels() {
     } else $('#size-summary').textContent = `Size: ${size.options[size.selectedIndex].text}`;
     $('#seeder-summary').textContent = seeders.value === '0' ? 'Availability' : `Availability: ${seeders.options[seeders.selectedIndex].text}`;
     const pills = $('#exclude-pills');
+    if (!pills) return;
     pills.replaceChildren(...excludedTerms.map(term => {
         const pill = document.createElement('button');
         pill.type = 'button';
@@ -488,6 +489,7 @@ function refreshFilteredResults() {
 }
 
 function openExcludeDialog() {
+    if (!$('#exclude-dialog')) return;
     $('#exclude-terms').value = excludedTerms.join(', ');
     $('#exclude-error').textContent = '';
     $('#exclude-dialog').showModal();
