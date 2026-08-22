@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -683,6 +683,7 @@ def search_results(
     min_seeders: int = 0,
     sort: str = "discovered_desc",
     limit: int = 100,
+    exclude: list[str] = Query(default=[]),
     _: dict[str, Any] = Depends(require_user),
 ):
     limit = max(1, min(limit, 250))
@@ -708,6 +709,16 @@ def search_results(
         raise HTTPException(422, "Unknown result sort")
     filters: list[str] = []
     params: list[Any] = []
+    excluded_terms = list(
+        dict.fromkeys(
+            term for value in exclude[:50] for term in search_terms(value)
+        )
+    )
+    for term in excluded_terms:
+        filters.append(
+            "search_contains(COALESCE(r.title, '') || ' ' || COALESCE(r.category, ''), ?) = 0"
+        )
+        params.append(term)
     if min_size_bytes:
         filters.append("r.size_bytes >= ?")
         params.append(min_size_bytes)
@@ -718,25 +729,26 @@ def search_results(
         filters.append("COALESCE(r.seeders, 0) >= ?")
         params.append(min_seeders)
     with connect() as db:
+        where_clauses: list[str] = []
         if not words:
             sql = "SELECT r.* FROM results r"
         else:
             sql = "SELECT r.* FROM results r"
             if match_mode == "all":
                 conditions = ["search_contains(r.title, ?) = 1" for _ in words]
-                sql += " WHERE " + " AND ".join(conditions)
+                where_clauses.append("(" + " AND ".join(conditions) + ")")
                 params = [*words, *params]
             elif match_mode == "any":
                 conditions = ["search_contains(r.title, ?) = 1" for _ in words]
-                sql += " WHERE " + " OR ".join(conditions)
+                where_clauses.append("(" + " OR ".join(conditions) + ")")
                 params = [*words, *params]
             else:
-                sql += " WHERE search_in_order(r.title, ?) = 1"
+                where_clauses.append("search_in_order(r.title, ?) = 1")
                 params = [q, *params]
         if filters:
-            sql += (" WHERE " if " WHERE " not in sql else " AND ") + " AND ".join(
-                filters
-            )
+            where_clauses.extend(filters)
+        if where_clauses:
+            sql += " WHERE " + " AND ".join(where_clauses)
         sql += f" ORDER BY {ordering[sort]} LIMIT ?"
         rows = db.execute(sql, (*params, limit)).fetchall()
     return [dict(row) for row in rows]

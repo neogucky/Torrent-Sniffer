@@ -15,6 +15,26 @@ let jobStates = new Map();
 let jobsLoaded = false;
 let crawlFinishTimer = null;
 let authRequestInFlight = false;
+let excludedTerms = loadExcludedTerms();
+let hasLocalSearch = false;
+
+function loadExcludedTerms() {
+    try {
+        const saved = JSON.parse(localStorage.getItem('research-index-excluded-terms') || 'null');
+        if (Array.isArray(saved)) return [...new Set(saved.map(term => String(term).trim()).filter(Boolean))];
+    } catch {
+        // Use the default when browser storage is unavailable or malformed.
+    }
+    return ['porn'];
+}
+
+function saveExcludedTerms() {
+    try {
+        localStorage.setItem('research-index-excluded-terms', JSON.stringify(excludedTerms));
+    } catch {
+        // The current session still uses the filters when storage is unavailable.
+    }
+}
 
 async function api(path, options = {}) {
     const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
@@ -308,8 +328,10 @@ async function searchLocal() {
         min_seeders: $('#seeder-filter').value,
         sort: $('#sort-results').value
     });
+    excludedTerms.forEach(term => params.append('exclude', term));
     if (maxGb !== null) params.set('max_size_bytes', String(Math.round(maxGb * gib)));
     const results = await api(`/api/results?${params}`);
+    hasLocalSearch = true;
     list.replaceChildren();
     for (const result of results) {
         const node = $('#result-template').content.cloneNode(true);
@@ -382,7 +404,7 @@ async function searchLocal() {
         node.querySelector('.query').textContent = `Collected from “${result.remote_query}” · ${result.discovered_at}`;
         list.append(node);
     }
-    $('#result-tools').hidden = !results.length;
+    $('#result-tools').hidden = false;
     updateFilterLabels();
     status(`${results.length} locally matching result${results.length === 1 ? '' : 's'}.`);
 }
@@ -397,10 +419,23 @@ function updateFilterLabels() {
         $('#size-summary').textContent = `Size: ${min}${max ? `–${max}` : '+'} GB`;
     } else $('#size-summary').textContent = `Size: ${size.options[size.selectedIndex].text}`;
     $('#seeder-summary').textContent = seeders.value === '0' ? 'Availability' : `Availability: ${seeders.options[seeders.selectedIndex].text}`;
+    const excludeSummary = $('#exclude-summary');
+    if (!excludedTerms.length) excludeSummary.textContent = 'Exclude: none';
+    else if (excludedTerms.length === 1) excludeSummary.textContent = `Exclude: ${excludedTerms[0]}`;
+    else excludeSummary.textContent = `Exclude: ${excludedTerms[0]} +${excludedTerms.length - 1}`;
+    excludeSummary.parentElement.title = excludedTerms.length
+        ? `Excluded: ${excludedTerms.join(', ')}`
+        : 'No excluded words';
 }
 
 function refreshFilteredResults() {
-    if ($('#results').childElementCount) searchLocal().catch(error => status(error.message));
+    if (hasLocalSearch) searchLocal().catch(error => status(error.message));
+}
+
+function openExcludeDialog() {
+    $('#exclude-terms').value = excludedTerms.join(', ');
+    $('#exclude-error').textContent = '';
+    $('#exclude-dialog').showModal();
 }
 
 function openCustomSizeDialog() {
@@ -535,6 +570,7 @@ $('#seeder-filter').onchange = () => {
     refreshFilteredResults();
 };
 $('#sort-results').onchange = refreshFilteredResults;
+$('#open-exclude-dialog').onclick = openExcludeDialog;
 $('#clear-size').onclick = () => {
     $('#size-filter').value = 'all';
     $('#min-size-gb').value = '';
@@ -564,6 +600,15 @@ $('#custom-size-form').onsubmit = (event) => {
     $('#size-filter').value = 'custom';
     $('#custom-size-dialog').close();
     closeFilter($('#size-filter'));
+    refreshFilteredResults();
+};
+$('#close-exclude-dialog').onclick = $('#cancel-exclude').onclick = () => $('#exclude-dialog').close();
+$('#exclude-form').onsubmit = (event) => {
+    event.preventDefault();
+    excludedTerms = [...new Set($('#exclude-terms').value.split(',').map(term => term.trim()).filter(Boolean))];
+    saveExcludedTerms();
+    updateFilterLabels();
+    $('#exclude-dialog').close();
     refreshFilteredResults();
 };
 $('#close-download-error').onclick = $('#dismiss-download-error').onclick = () => $('#download-error-dialog').close();
@@ -787,6 +832,7 @@ $('#remove-qbit').onclick = async () => {
 $('#open-active').onclick = () => openCrawlDialog('active');
 $('#open-crawls').onclick = () => openCrawlDialog('all');
 $('#close-crawl-dialog').onclick = () => $('#crawl-dialog').close();
+updateFilterLabels();
 initialiseApp();
 setInterval(() => {
     if (currentUser) {

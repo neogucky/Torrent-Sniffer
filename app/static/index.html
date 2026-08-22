@@ -115,7 +115,13 @@
                 <option value="seeders_desc">Most seeders first</option>
                 <option value="seeders_asc">Fewest seeders first</option>
             </optgroup>
-        </select></label></section>
+        </select></label>
+        <span class="result-tools-spacer"></span>
+        <button type="button" id="open-exclude-dialog" class="exclude-button" aria-label="Edit excluded matches" title="Edit excluded matches">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6 7v5l-4 2v-7L4 5z"></path></svg>
+            <span id="exclude-summary">Exclude: porn</span>
+        </button>
+    </section>
     <section id="results" class="results"></section>
 </main>
 <dialog id="source-dialog">
@@ -256,6 +262,20 @@
         <footer>
             <button type="button" id="cancel-custom-size">Cancel</button>
             <button class="primary" value="default">Apply range</button>
+        </footer>
+    </form>
+</dialog>
+<dialog id="exclude-dialog">
+    <form id="exclude-form" method="dialog">
+        <header><h2>Exclude matches</h2>
+            <button type="button" class="icon-button" id="close-exclude-dialog" aria-label="Close">×</button>
+        </header>
+        <p class="hint">Enter comma-separated words. Results containing any of these words in the title will be excluded.</p>
+        <label>Excluded words<input id="exclude-terms" placeholder="porn, example"></label>
+        <p id="exclude-error" class="error"></p>
+        <footer>
+            <button type="button" id="cancel-exclude">Cancel</button>
+            <button class="primary" value="default">Apply filters</button>
         </footer>
     </form>
 </dialog>

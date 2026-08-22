@@ -64,6 +64,7 @@ class SearchTableParser(HTMLParser):
         self._row: list[dict[str, object]] | None = None
         self._cell: list[str] | None = None
         self._cell_class = ""
+        self._cell_attrs: dict[str, str | None] = {}
         self._cell_nested_classes: set[str] = set()
         self._links: list[tuple[str | None, str]] = []
         self._anchor_href: str | None = None
@@ -76,6 +77,7 @@ class SearchTableParser(HTMLParser):
         elif tag == "td" and self._row is not None:
             self._cell = []
             self._cell_class = attrs_map.get("class", "")
+            self._cell_attrs = attrs_map
             self._cell_nested_classes = set()
             self._links = []
         elif tag == "a" and self._cell is not None:
@@ -98,6 +100,7 @@ class SearchTableParser(HTMLParser):
                     "class": " ".join(
                         [self._cell_class, *sorted(self._cell_nested_classes)]
                     ).strip(),
+                    "attrs": self._cell_attrs,
                     "links": self._links,
                 }
             )
@@ -130,15 +133,27 @@ def _field_value(
         if link:
             raw = link[0] if rule.get("value") == "href" else link[1]
     else:
-        class_needle = str(rule.get("cell_class_contains", ""))
-        cell = (
-            next(
-                (item for item in row if class_needle in str(item["class"])),
-                None,
-            )
-            if class_needle
-            else None
-        )
+        cell = None
+        attribute_rule = rule.get("cell_attribute_equals")
+        if isinstance(attribute_rule, dict):
+            candidates = [
+                item
+                for item in row
+                if all(
+                    str(item.get("attrs", {}).get(name, "")) == str(value)
+                    for name, value in attribute_rule.items()
+                )
+            ]
+            match_index = int(rule.get("match_index", 0))
+            if 0 <= match_index < len(candidates):
+                cell = candidates[match_index]
+        else:
+            class_needle = str(rule.get("cell_class_contains", ""))
+            if class_needle:
+                cell = next(
+                    (item for item in row if class_needle in str(item["class"])),
+                    None,
+                )
         if (
             cell is None
             and "fallback_index" in rule
@@ -192,10 +207,14 @@ def parse_torrent_date(value: str) -> str | None:
     if lowered == "yesterday":
         return (today - timedelta(days=1)).isoformat()
     relative = re.fullmatch(
-        r"(\d+)\s+(minute|hour|day|week|month|year)s?\s+ago", lowered
+        r"(\d+)\s+(minute|min|hour|hr|day|week|month|year)s?\s+ago", lowered
     )
     if relative:
         amount, unit = int(relative.group(1)), relative.group(2)
+        unit = {
+            "min": "minute",
+            "hr": "hour",
+        }.get(unit, unit)
         days = (
             amount
             * {"minute": 0, "hour": 0, "day": 1, "week": 7, "month": 30, "year": 365}[
@@ -203,6 +222,10 @@ def parse_torrent_date(value: str) -> str | None:
             ]
         )
         return (today - timedelta(days=days)).isoformat()
+    if lowered.startswith("today"):
+        return today.isoformat()
+    if lowered.startswith("yesterday"):
+        return (today - timedelta(days=1)).isoformat()
     normalised = re.sub(
         r"(\d{1,2})(?:st|nd|rd|th)", r"\1", cleaned, flags=re.IGNORECASE
     )

@@ -344,6 +344,37 @@ button.primary {
     display: none;
 }
 
+.result-tools-spacer {
+    flex: 1;
+}
+
+.exclude-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 7px 10px;
+    border: 1px solid #43564a;
+    border-radius: 999px;
+    background: #18211d;
+    color: #cbd9cf;
+    font-size: .82rem;
+    cursor: pointer;
+}
+
+.exclude-button:hover, .exclude-button:focus-visible {
+    border-color: #8ce5a1;
+}
+
+.exclude-button svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: #8ce5a1;
+    stroke-width: 1.8;
+    stroke-linejoin: round;
+}
+
 .filter-chip {
     position: relative;
 }
