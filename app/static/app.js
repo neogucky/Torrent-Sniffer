@@ -54,7 +54,7 @@ function saveDebugEnabled() {
 }
 
 async function api(path, options = {}) {
-    const response = await fetch(path, {headers: {'Content-Type': 'application/json'}, ...options});
+    const response = await fetch(path, {cache: 'no-store', headers: {'Content-Type': 'application/json'}, ...options});
     if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         const message = Array.isArray(payload.detail) ? payload.detail.map(item => item.msg || 'Invalid value').join('; ') : (payload.detail || 'Request failed');
@@ -72,6 +72,9 @@ function showAuth(setup) {
     $('#auth-title').textContent = setup ? 'Create the owner account' : 'Log in';
     $('#auth-copy').textContent = setup ? 'No account exists yet. This one-time setup creates the administrator.' : 'Use your Torrent Sniffer account.';
     $('#auth-confirm-wrap').hidden = !setup;
+    $('#auth-confirm').disabled = !setup;
+    $('#auth-confirm').required = setup;
+    $('#auth-password').autocomplete = setup ? 'new-password' : 'current-password';
     $('#auth-submit').textContent = setup ? 'Create account' : 'Log in';
     $('#auth-error').textContent = '';
     if (!$('#auth-dialog').open) $('#auth-dialog').showModal();
@@ -382,7 +385,7 @@ async function searchLocal() {
         link.href = result.details_url;
         link.textContent = result.title;
         link.title = result.title;
-        node.querySelector('.metadata').textContent = [result.category, result.size, `↑ ${result.seeders ?? '—'}`, `↓ ${result.leechers ?? '—'}`, result.torrent_created_at ? `torrent date ${result.torrent_created_at}` : 'torrent date unknown'].filter(Boolean).join(' · ');
+        node.querySelector('.metadata').textContent = [result.size, `↑ ${result.seeders ?? '—'}`, `↓ ${result.leechers ?? '—'}`, result.torrent_created_at ? `torrent date ${result.torrent_created_at}` : 'torrent date unknown', result.category].filter(Boolean).join(' · ');
         const magnet = node.querySelector('.magnet');
         const fetchButton = node.querySelector('.fetch-magnet');
         const qbitAction = node.querySelector('.qbit-action');
@@ -896,6 +899,9 @@ $('#open-crawls').onclick = () => openCrawlDialog('all');
 $('#close-crawl-dialog').onclick = () => $('#crawl-dialog').close();
 updateFilterLabels();
 initialiseApp();
+window.addEventListener('pageshow', event => {
+    if (event.persisted) initialiseApp();
+});
 setInterval(() => {
     if (currentUser) {
         Promise.all([refreshJobs(), refreshSummary()]).catch(() => {

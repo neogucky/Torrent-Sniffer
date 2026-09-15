@@ -28,6 +28,16 @@ Open `http://127.0.0.1:8000`. Data is stored in `data/research-index.sqlite` by 
 
 Source behaviour is defined in local adapter JSON files rather than application code. If a source’s markup differs, add a new adapter configuration rather than weakening rate limits or attempting to evade the source’s protections.
 
+Editable `adapters/*.json` files are ignored by Git. Keep private source definitions there; the bundled default remains in `app/default_adapter.json`. Field rules can use ordered `alternatives` and `row_cell_count` to handle different table layouts. Request details report missing configured fields and sizes that could not be converted to bytes, even when the HTTP request succeeded. Existing metadata is updated when its search page is crawled again.
+
+Accounts and sessions are stored in the SQLite database. Sessions last 14 days; after expiry, log in to the existing account. Authentication responses are not cached, and returning to a restored browser page rechecks the session.
+
+## Regression checks
+
+```sh
+python -m unittest discover -s tests -v
+```
+
 ## Optional Electron shell
 
 The frontend is regular static HTML and can be opened in any browser. To package the same UI as a desktop shell, run:

@@ -118,6 +118,14 @@ class SearchTableParser(HTMLParser):
 def _field_value(
     row: list[dict[str, object]], rule: dict[str, Any], base_url: str
 ) -> str | int | None:
+    if "alternatives" in rule:
+        for alternative in rule["alternatives"]:
+            value = _field_value(row, alternative, base_url)
+            if value is not None:
+                return value
+        return None
+    if "row_cell_count" in rule and len(row) != int(rule["row_cell_count"]):
+        return None
     raw: str | None = None
     if "link_href_contains" in rule:
         needle = str(rule["link_href_contains"])
@@ -126,7 +134,7 @@ def _field_value(
                 (href, text)
                 for cell in row
                 for href, text in cell["links"]
-                if href and needle in href
+                if href and needle in href and (rule.get("value") == "href" or text.strip())
             ),
             None,
         )
@@ -236,13 +244,14 @@ def parse_torrent_date(value: str) -> str | None:
         "%b %d %Y",
         "%b %d '%y",
         "%b %d %y",
+        "%m-%d %Y",
     ):
         try:
             return datetime.strptime(normalised, fmt).date().isoformat()
         except ValueError:
             pass
     try:
-        # TPB commonly omits the year for recent uploads, e.g. "01-18 17:41".
+        # Some sources omit the year for recent uploads, e.g. "01-18 17:41".
         return datetime.strptime(
             f"{today.year}-{normalised}", "%Y-%m-%d %H:%M"
         ).date().isoformat()
@@ -556,7 +565,22 @@ def _complete_search_request(
             len(results),
             adjustment,
             wait_after,
+            extraction_diagnostics(results, adapter),
         )
+
+
+def extraction_diagnostics(results: list[ParsedResult], adapter: dict[str, Any]) -> str | None:
+    if not results:
+        return "No result rows matched; check the adapter rules if results were expected."
+    missing = []
+    for name in adapter["result"]["fields"]:
+        count = sum(getattr(item, name, None) is None for item in results)
+        if count:
+            missing.append(f"{name}: {count}/{len(results)} missing")
+    invalid_sizes = sum(item.size is not None and item.size_bytes is None for item in results)
+    if invalid_sizes:
+        missing.append(f"size: {invalid_sizes}/{len(results)} could not be converted to bytes")
+    return "Extraction warning: " + "; ".join(missing) if missing else None
 
 
 def _complete_detail_request(
