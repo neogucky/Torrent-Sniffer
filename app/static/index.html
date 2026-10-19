@@ -4,12 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Torrent Sniffer</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261019-6">
+    <link rel="stylesheet" href="/static/styles.css?v=20261019-7">
 </head>
 <body>
 <main id="app" hidden>
     <header class="topbar">
-        <div class="brand"><h1>Torrent Sniffer</h1></div>
+        <div class="brand"><a class="home-link" href="/" aria-label="Alphane home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6"/></svg>Home</a><h1>Torrent Sniffer</h1></div>
         <div id="account" class="account" hidden>
             <button id="open-settings" class="settings-button" aria-label="Settings" title="Settings">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -195,7 +195,7 @@
 </template>
 <dialog id="auth-dialog">
     <form id="auth-form" method="dialog">
-        <header><h2 id="auth-title">Log in</h2></header>
+        <a class="home-link" href="/" aria-label="Alphane home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6"/></svg>Home</a><header><h2 id="auth-title">Log in</h2></header>
         <p id="auth-copy" class="hint"></p><label>Username<input id="auth-username" autocomplete="username"
                                                                  required></label><label>Password<input
             id="auth-password" type="password" autocomplete="current-password" required></label><label
@@ -329,6 +329,6 @@
         <div id="crawl-dialog-jobs" class="jobs"></div>
     </div>
 </dialog>
-<script src="/static/app.js?v=20261019-6"></script>
+<script src="/static/app.js?v=20261019-7"></script>
 </body>
 </html>
