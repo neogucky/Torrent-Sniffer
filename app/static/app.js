@@ -376,6 +376,21 @@ function showDownloadError(button, message) {
     if (!$('#download-error-dialog').open) $('#download-error-dialog').showModal();
 }
 
+function readableSize(result) {
+    const rawBytes = /^(\d+)\s*B$/i.exec(result.size?.trim() || '');
+    if (result.size && !rawBytes) return result.size;
+    const bytes = result.size_bytes ?? (rawBytes ? Number(rawBytes[1]) : null);
+    if (bytes === null || !Number.isFinite(bytes) || bytes < 0) return result.size;
+    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
+    return `${Number(value.toFixed(2))} ${units[unit]}`;
+}
+
 async function searchLocal() {
     const rawQuery = $('#local-query').value.trim();
     const list = $('#results');
@@ -411,7 +426,7 @@ async function searchLocal() {
         link.href = result.details_url;
         link.textContent = result.title;
         link.title = result.title;
-        node.querySelector('.metadata').textContent = [result.size, `↑ ${result.seeders ?? '—'}`, `↓ ${result.leechers ?? '—'}`, result.torrent_created_at ? `torrent date ${result.torrent_created_at}` : 'torrent date unknown', result.category].filter(Boolean).join(' · ');
+        node.querySelector('.metadata').textContent = [readableSize(result), `↑ ${result.seeders ?? '—'}`, `↓ ${result.leechers ?? '—'}`, result.torrent_created_at ? `torrent date ${result.torrent_created_at}` : 'torrent date unknown', result.category].filter(Boolean).join(' · ');
         const magnet = node.querySelector('.magnet');
         const fetchButton = node.querySelector('.fetch-magnet');
         const qbitAction = node.querySelector('.qbit-action');
