@@ -201,6 +201,20 @@ def initialise() -> None:
             """)
         _migrate_crawl_jobs(db)
         _migrate_additive_columns(db)
+        from .wishlist import initialise_wishlist
+
+        initialise_wishlist(db)
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS crawl_jobs_wishlist ON crawl_jobs(wishlist_id)"
+        )
+        db.execute("""CREATE TABLE IF NOT EXISTS source_auth (
+            source_id INTEGER PRIMARY KEY REFERENCES sources(id),
+            mode TEXT NOT NULL CHECK(mode IN ('password', 'cookie')),
+            secret TEXT NOT NULL,
+            last_error TEXT,
+            last_request_error TEXT
+        )""")
+        _add_column_if_missing(db, "source_auth", "last_request_error", "TEXT")
         _backfill_result_sizes(db)
         _backfill_legacy_progress(db)
         db.execute(
@@ -275,9 +289,12 @@ def _migrate_additive_columns(db: sqlite3.Connection) -> None:
     from .adapters import load_adapters
 
     available = load_adapters()
-    if len(available) == 1:
-        adapter_id = next(iter(available))
-        db.execute("UPDATE sources SET kind=? WHERE kind<>?", (adapter_id, adapter_id))
+    legacy_adapters = {
+        key: value for key, value in available.items() if key != "rutracker"
+    }
+    if len(legacy_adapters) == 1:
+        adapter_id = next(iter(legacy_adapters))
+        db.execute("UPDATE sources SET kind=? WHERE kind='unconfigured'", (adapter_id,))
     _add_column_if_missing(
         db, "crawl_jobs", "page_complete", "INTEGER NOT NULL DEFAULT 0"
     )

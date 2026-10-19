@@ -1,0 +1,28 @@
+{
+  "id": "rutracker",
+  "label": "RuTracker (account required)",
+  "search": {
+    "path_template": "/forum/tracker.php?nm={query}&f%5B%5D=-1&o=10&s=2&start={offset}",
+    "query_encoding": "percent",
+    "charset": "windows-1251",
+    "page_size": 50
+  },
+  "response_charset": "windows-1251",
+  "pagination": {"href_regex": "tracker\\.php\\?(?:[^\"'<>]*?&(?:amp;)?)?start=(\\d+)", "offset": true},
+  "result": {
+    "table_id": "tor-tbl",
+    "base_path": "/forum/",
+    "required_link_href_contains": "viewtopic.php?t=",
+    "fields": {
+      "title": {"cell_class_contains": "t-title-col", "link_href_contains": "viewtopic.php?t="},
+      "details_url": {"cell_class_contains": "t-title-col", "link_href_contains": "viewtopic.php?t=", "value": "href", "as": "url"},
+      "category": {"cell_class_contains": "f-name-col"},
+      "uploader": {"cell_class_contains": "u-name-col"},
+      "size": {"cell_class_contains": "tor-size", "value_attribute": "data-ts_text", "as": "bytes_size"},
+      "seeders": {"cell_class_contains": "seedmed", "fallback_index": 6, "as": "integer"},
+      "leechers": {"cell_class_contains": "leechmed", "fallback_index": 7, "as": "integer"},
+      "torrent_created_at": {"fallback_index": 9, "value_attribute": "data-ts_text", "as": "unix_date"}
+    }
+  },
+  "magnet": {"href_regex": "magnet:\\?[^\"'<>]+"}
+}

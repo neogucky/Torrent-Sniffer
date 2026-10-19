@@ -226,7 +226,8 @@ h2, h3 {
     color: #a8c6ff;
 }
 
-.account .settings-button {
+.account .settings-button,
+.account .wishlist-button {
     display: grid;
     width: 36px;
     min-width: 36px;
@@ -235,6 +236,7 @@ h2, h3 {
 }
 
 .settings-button svg,
+.wishlist-button svg,
 .logout-button svg {
     width: 16px;
     height: 16px;
@@ -930,6 +932,38 @@ textarea {
         max-width: calc(100% - 28px);
     }
 }
+
+#wishlist-dialog { width: min(850px, calc(100vw - 28px)); max-height: 85vh; overflow-y: auto; }
+.wishlist-dialog-content { display: grid; gap: 15px; padding: 22px; }
+.wishlist-dialog-content h2 { font-size: 1.2rem; }
+.wishlist-filter { display: flex; align-items: center; gap: 10px; justify-self: start; }
+.wishlist-filter select { width: auto; }
+.wish-row, .wish-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.wishlist-dialog-content .wish-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: 12px; padding: 0; }
+#wish-status:empty { display: none; }
+.account .wishlist-button { position: relative; margin-right: 8px; }
+.account .wishlist-count { position: absolute; top: -9px; right: -11px; min-width: 19px; padding: 1px 4px; border-radius: 10px; color: #0b1019; background: #a8c6ff; border: 2px solid #0b1019; font-size: 10px; line-height: 14px; }
+.wish-row { padding: 14px 0; border-top: 1px solid #2b384c; }
+.wish-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.wish-row p { margin: 5px 0 0; font-size: .78rem; }
+.wish-actions { justify-content: flex-start; gap: 6px; }
+.wish-actions button { min-height: 30px; padding: 5px 8px; font-size: .78rem; }
+#source-auth-fields { display: grid; gap: 7px; }
+#source-auth-fields p { margin: 0; font-size: .8rem; }
+#source-dialog { max-height: 90vh; overflow-y: auto; }
+@media (max-width: 760px) {
+    .wishlist-dialog-content .wish-form { grid-template-columns: 1fr auto; }
+    .wish-form > label:first-child { grid-column: span 2; }
+}
+
+#source-auth-request-headers { width: 100%; min-height: 140px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#source-auth-request-headers[aria-invalid="true"] { border-color: #ffb3b3; }
 
 /* Shared Alphane navigation and controls. */
 .home-link { display: inline-flex; align-items: center; gap: 7px; width: fit-content; color: #a8c6ff; text-decoration: none; font-size: 13px; font-weight: 550; line-height: 1.5; }

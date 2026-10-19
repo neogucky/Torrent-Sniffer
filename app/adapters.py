@@ -15,7 +15,10 @@ class AdapterError(ValueError):
 def load_adapters() -> dict[str, dict[str, Any]]:
     # The builtin is independent of the mutable adapters directory, which is
     # commonly mounted as a volume in container deployments.
-    adapters: dict[str, dict[str, Any]] = {"default": _builtin_default_adapter()}
+    adapters: dict[str, dict[str, Any]] = {
+        "default": _builtin_default_adapter(),
+        "rutracker": json.loads((Path(__file__).parent / "rutracker_adapter.json").read_text()),
+    }
     for path in sorted(ADAPTER_DIR.glob("*.json")):
         try:
             adapter = json.loads(path.read_text(encoding="utf-8"))

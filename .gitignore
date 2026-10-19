@@ -7,3 +7,8 @@ dist/
 node_modules/
 .DS_Store
 /adapters/*.json
+*.sqlite
+*.sqlite-*
+source-secrets.key
+.pytest_cache/
+.ruff_cache/
