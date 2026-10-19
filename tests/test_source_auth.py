@@ -204,8 +204,8 @@ def test_adapter_encoding_pagination_and_metadata(client):
         adapter, "https://forum.example.invalid", "Кино & TV", 2
     )
     assert "start=50" in url and "%CA%E8%ED%EE" in url and "%26" in url
-    html = """<table><tr><td></td><td></td><td class="f-name-col">Movies</td>
-    <td><a href="viewtopic.php?t=7">Кино &amp; TV</a></td><td class="u-name-col">Author</td>
+    html = """<table id="tor-tbl"><tr><td></td><td></td><td class="f-name-col">Movies</td>
+    <td class="t-title-col"><a href="viewtopic.php?t=7">Кино &amp; TV</a></td><td class="u-name-col">Author</td>
     <td class="tor-size" data-ts_text="4294967296"><a href="dl.php?t=7">4 GB</a></td>
     <td class="seedmed"><b>12</b></td><td class="leechmed">3</td><td>20</td>
     <td data-ts_text="1704067200">01-Янв-24</td></tr></table>

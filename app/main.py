@@ -1028,6 +1028,7 @@ def summary(_: dict[str, Any] = Depends(require_user)):
     with connect() as db:
         row = db.execute("""SELECT
               (SELECT COUNT(*) FROM results) AS total_results,
+              (SELECT COUNT(*) FROM wishlist WHERE status='active') AS active_wishes,
               COUNT(*) AS total_crawls,
               COALESCE(SUM(CASE WHEN status IN ('queued', 'running', 'retrying') THEN 1 ELSE 0 END), 0) AS active_crawls,
               COALESCE(SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END), 0) AS completed_crawls

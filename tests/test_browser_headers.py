@@ -84,10 +84,10 @@ def test_unrelated_headers_are_never_extracted_or_persisted(client):
             "curl 'https://example.invalid' -H 'Cookie: private-secret'",
             "Copy Request Headers",
         ),
-        (HEADERS + "\nprivate-secret", "same line"),
+        (HEADERS + "\nprivate-secret", "layout is incomplete"),
         (HEADERS + "\n\nprivate-secret", "request body"),
         (HEADERS + "\nX-Other: private-secret\x00", "plain text"),
-        (HEADERS + "\nX-Other: private-secret\r", "plain text"),
+        (HEADERS + "\nX-Other: private-secret\x1b", "plain text"),
         (HEADERS + "\nHost: different.example.invalid", "different source"),
         (
             "GET https://different.example.invalid/page HTTP/1.1\n" + HEADERS,

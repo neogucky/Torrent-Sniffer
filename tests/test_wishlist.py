@@ -27,6 +27,20 @@ def wishes(client, state="active"):
     return client.get("/api/wishlist", params={"state": state}).json()
 
 
+def test_summary_counts_only_active_wishes(client, source):
+    assert client.get("/api/summary").json()["active_wishes"] == 0
+    first = client.post("/api/wishlist", json={"query": "First movie"}).json()
+    queue(client, source, "Second movie")
+    assert client.get("/api/summary").json()["active_wishes"] == 2
+    client.patch(f"/api/wishlist/{first['id']}", json={"status": "archived"})
+    assert len(wishes(client, "archived")) == 1
+    assert client.get("/api/summary").json()["active_wishes"] == 1
+    client.patch(f"/api/wishlist/{first['id']}", json={"status": "active"})
+    assert client.get("/api/summary").json()["active_wishes"] == 2
+    client.delete(f"/api/wishlist/{first['id']}")
+    assert client.get("/api/summary").json()["active_wishes"] == 1
+
+
 def test_auto_add_empty_crawl_and_normalized_dedup(client, source):
     crawl(client, source, html="<table></table>")
     queue(client, source, "  MOVIE.example ")

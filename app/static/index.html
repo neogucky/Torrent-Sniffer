@@ -4,13 +4,17 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Torrent Sniffer</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261019-7">
+    <link rel="stylesheet" href="/static/styles.css?v=20261019-8">
 </head>
 <body>
 <main id="app" hidden>
     <header class="topbar">
         <div class="brand"><a class="home-link" href="/" aria-label="Alphane home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6"/></svg>Home</a><h1>Torrent Sniffer</h1></div>
         <div id="account" class="account" hidden>
+            <button id="open-wishlist" class="wishlist-button" aria-label="Wishlist (0 active entries)" title="Wishlist" aria-haspopup="dialog" aria-controls="wishlist-dialog">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4V3z"/></svg>
+                <span id="wishlist-count" class="wishlist-count" aria-hidden="true">0</span>
+            </button>
             <button id="open-settings" class="settings-button" aria-label="Settings" title="Settings">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                     <circle cx="12" cy="12" r="3"></circle>
@@ -48,19 +52,6 @@
             </div>
         </aside>
     </header>
-    <section class="panel wishlist-panel" aria-labelledby="wishlist-heading">
-        <header class="wishlist-heading">
-            <h2 id="wishlist-heading">Wishlist</h2>
-            <label>Show<select id="wishlist-state"><option value="active">Wishlist</option><option value="archived">Archive</option></select></label>
-        </header>
-        <form id="wish-form" class="wish-form">
-            <label>Movie or series<input id="wish-query" placeholder="Title or search term" maxlength="180" required></label>
-            <label>Type<select id="wish-kind"><option value="movie">Movie</option><option value="series">Series</option></select></label>
-            <button type="submit">Add to wishlist</button>
-        </form>
-        <p id="wish-status" class="hint" aria-live="polite"></p>
-        <div id="wishlist-items"></div>
-    </section>
     <section class="panel controls workflow-panel">
         <span class="step-number" aria-hidden="true">1</span>
         <label class="source-choice">Source<select id="source-select"></select></label>
@@ -139,6 +130,22 @@
     </section>
     <section id="results" class="results"></section>
 </main>
+<dialog id="wishlist-dialog" aria-labelledby="wishlist-heading">
+    <div class="wishlist-dialog-content">
+        <header>
+            <h2 id="wishlist-heading">Wishlist</h2>
+            <button type="button" class="icon-button" id="close-wishlist-dialog" aria-label="Close wishlist">×</button>
+        </header>
+        <form id="wish-form" class="wish-form">
+            <label>Movie or series<input id="wish-query" placeholder="Title or search term" maxlength="180" required></label>
+            <label>Type<select id="wish-kind"><option value="movie">Movie</option><option value="series">Series</option></select></label>
+            <button type="submit">Add to wishlist</button>
+        </form>
+        <label class="wishlist-filter">Show<select id="wishlist-state"><option value="active">Wishlist</option><option value="archived">Archive</option></select></label>
+        <p id="wish-status" class="hint" aria-live="polite"></p>
+        <div id="wishlist-items"></div>
+    </div>
+</dialog>
 <dialog id="source-dialog">
     <form id="source-form" method="dialog">
         <header><h2 id="source-dialog-title">Add source</h2>
@@ -329,6 +336,6 @@
         <div id="crawl-dialog-jobs" class="jobs"></div>
     </div>
 </dialog>
-<script src="/static/app.js?v=20261019-7"></script>
+<script src="/static/app.js?v=20261019-8"></script>
 </body>
 </html>

@@ -13,6 +13,121 @@ BROWSER_HEADERS = {
     "sec-ch-ua-mobile": "Sec-CH-UA-Mobile",
     "sec-ch-ua-platform": "Sec-CH-UA-Platform",
 }
+_TOKEN = r":?[!#$%&'*+\-.^_`|~0-9A-Za-z]+"
+_HEADER_LINE = re.compile(rf"({_TOKEN}):[ \t]*(.*)\Z")
+_HEADER_NAME = re.compile(rf"({_TOKEN}):?\Z")
+_COPY_NAMES = set(BROWSER_HEADERS) | {
+    ":authority",
+    ":method",
+    ":path",
+    ":scheme",
+    ":status",
+    "accept-encoding",
+    "authorization",
+    "cache-control",
+    "connection",
+    "content-length",
+    "content-type",
+    "cookie",
+    "dnt",
+    "host",
+    "origin",
+    "pragma",
+    "priority",
+    "proxy-authorization",
+    "referer",
+    "sec-gpc",
+    "sec-fetch-dest",
+    "sec-fetch-mode",
+    "sec-fetch-site",
+    "sec-fetch-user",
+    "set-cookie",
+    "te",
+    "upgrade-insecure-requests",
+}
+# Quoted values and browser comments are opaque. A URL colon is not a header
+# boundary: a flattened header separator requires whitespace after the colon.
+_FLAT_BOUNDARY = re.compile(
+    rf'"(?:\\.|[^"\\])*"|\([^)]*\)|[ \t]+(?P<name>{_TOKEN}):(?=[ \t])'
+)
+
+
+def normalise_request_headers(value: str) -> str:
+    """Repair common DevTools clipboard layouts without decoding header values."""
+    value = value.removeprefix("\ufeff")
+    if len(value) > 32768 or any(
+        (ord(char) < 32 and char not in "\r\n\t")
+        or (ord(char) > 126 and char not in "\u2028\u2029\u00a0")
+        for char in value
+    ):
+        raise ValueError("Paste request headers as plain text.")
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    value = value.replace("\u2028", "\n").replace("\u2029", "\n")
+    value = value.replace("\u00a0", " ")
+    if "\n" not in value and "\\n" in value:
+        value = value.replace("\\r\\n", "\n").replace("\\n", "\n")
+    if len(value) > 32768:
+        raise ValueError("Request headers are too long; copy one request only.")
+
+    lines = []
+    for line in value.strip().split("\n"):
+        cells = [cell.strip() for cell in line.split("\t")]
+        if len(cells) > 1 and all(_HEADER_LINE.fullmatch(cell) for cell in cells):
+            lines.extend(cells)
+        elif (
+            len(cells) > 1
+            and len(cells) % 2 == 0
+            and all(_HEADER_NAME.fullmatch(cell) for cell in cells[::2])
+        ):
+            lines.extend(
+                f"{name.rstrip(':')}: {content}"
+                for name, content in zip(cells[::2], cells[1::2])
+            )
+        else:
+            lines.append(line)
+    if len(lines) == 1 and (
+        _HEADER_LINE.fullmatch(lines[0])
+        or re.match(r"[A-Z]+\s+\S+\s+HTTP/[\d.]+\s", lines[0])
+    ):
+        value = _FLAT_BOUNDARY.sub(
+            lambda match: f"\n{match['name']}:" if match["name"] else match[0],
+            lines[0],
+        )
+        lines = value.split("\n")
+
+    result = []
+    paired = False
+    has_request_line = bool(
+        lines and re.fullmatch(r"[A-Z]+\s+\S+\s+HTTP/[\d.]+", lines[0].strip())
+    )
+    index = 0
+    while index < len(lines):
+        line = lines[index].strip()
+        name = _HEADER_NAME.fullmatch(line)
+        if name:
+            following = index + 1
+            while following < len(lines) and not lines[following].strip():
+                following += 1
+            content = lines[following].strip() if following < len(lines) else ""
+            next_header = _HEADER_LINE.fullmatch(content)
+            next_name = _HEADER_NAME.fullmatch(content)
+            is_next_header = (
+                next_header and next_header[1].lower() in _COPY_NAMES
+            ) or (next_name and next_name[1].lower() in _COPY_NAMES)
+            if content and not is_next_header:
+                result.append(f"{name[1]}: {content}")
+                paired = True
+                index = following + 1
+                continue
+            if name[1].lower() in _COPY_NAMES:
+                result.append(f"{name[1]}:")
+                paired = True
+                index += 1
+                continue
+        if line or not paired or has_request_line:
+            result.append(line)
+        index += 1
+    return "\n".join(result)
 
 
 def validate_browser_headers(headers: dict[str, str]) -> dict[str, str]:
@@ -62,7 +177,7 @@ def extract_request_headers(
     value: str, base_url: str | None = None
 ) -> tuple[str, dict[str, str]]:
     """Return the Cookie value and allowed context; callers validate cookie syntax."""
-    value = value.replace("\r\n", "\n")
+    value = normalise_request_headers(value)
     if (
         not value
         or len(value) > 32768
@@ -100,10 +215,10 @@ def extract_request_headers(
             raise ValueError(
                 "Paste only the request headers, without a request body or a second request."
             )
-        match = re.fullmatch(r"(:?[!#$%&'*+\-.^_`|~0-9A-Za-z]+):[ \t]*(.*)", line)
+        match = _HEADER_LINE.fullmatch(line)
         if not match:
             raise ValueError(
-                "Each request header needs a name and value on the same line. Use Copy Request Headers or View source."
+                "Header layout is incomplete. Copy the request headers again."
             )
         name, content = match.group(1).lower(), match.group(2).strip()
         if name in {"set-cookie", ":status"}:

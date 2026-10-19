@@ -62,8 +62,10 @@ class ParsedResult:
 class SearchTableParser(HTMLParser):
     """Collect generic HTML table rows, cells, classes, and links for an adapter."""
 
-    def __init__(self) -> None:
+    def __init__(self, table_id: str | None = None) -> None:
         super().__init__(convert_charrefs=True)
+        self.table_id = table_id
+        self._tables: list[str | None] = []
         self.rows: list[list[dict[str, object]]] = []
         self._row: list[dict[str, object]] | None = None
         self._cell: list[str] | None = None
@@ -76,6 +78,11 @@ class SearchTableParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_map = dict(attrs)
+        if tag == "table":
+            self._tables.append(attrs_map.get("id"))
+            return
+        if not self._in_scope():
+            return
         if tag == "tr":
             self._row = []
         elif tag == "td" and self._row is not None:
@@ -91,12 +98,20 @@ class SearchTableParser(HTMLParser):
             self._cell_nested_classes.update(attrs_map["class"].split())
 
     def handle_data(self, data: str) -> None:
+        if not self._in_scope():
+            return
         if self._cell is not None:
             self._cell.append(data)
         if self._anchor_text is not None:
             self._anchor_text.append(data)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "table":
+            if self._tables:
+                self._tables.pop()
+            return
+        if not self._in_scope():
+            return
         if tag == "td" and self._row is not None and self._cell is not None:
             self._row.append(
                 {
@@ -117,6 +132,11 @@ class SearchTableParser(HTMLParser):
             if self._row:
                 self.rows.append(self._row)
             self._row = None
+
+    def _in_scope(self) -> bool:
+        return self.table_id is None or bool(
+            self._tables and self._tables[-1] == self.table_id
+        )
 
 
 def _field_value(
@@ -140,6 +160,7 @@ def _field_value(
                 for href, text in cell["links"]
                 if href
                 and needle in href
+                and str(rule.get("cell_class_contains", "")) in str(cell["class"])
                 and (rule.get("value") == "href" or text.strip())
             ),
             None,
@@ -288,7 +309,7 @@ def parse_results(
     base_url = urllib.parse.urljoin(
         base_url.rstrip("/") + "/", adapter["result"].get("base_path", "")
     )
-    parser = SearchTableParser()
+    parser = SearchTableParser(adapter["result"].get("table_id"))
     parser.feed(html)
     fields = adapter["result"]["fields"]
     required_href = str(adapter["result"].get("required_link_href_contains", ""))

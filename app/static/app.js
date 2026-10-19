@@ -344,6 +344,9 @@ async function refreshSummary() {
     $('#total-results').textContent = data.total_results;
     $('#total-crawls').textContent = data.total_crawls;
     $('#active-crawls').textContent = data.active_crawls || 0;
+    const count = data.active_wishes || 0;
+    $('#wishlist-count').textContent = count;
+    $('#open-wishlist').setAttribute('aria-label', `Wishlist (${count} active ${count === 1 ? 'entry' : 'entries'})`);
 }
 
 async function refreshQbittorrent() {
@@ -352,7 +355,7 @@ async function refreshQbittorrent() {
 
 async function refreshAll() {
     await Promise.all([refreshAdapters(), refreshSources(), refreshJobs(), refreshSummary(), refreshQbittorrent()]);
-    await refreshWishlist();
+    await refreshWishlist(false);
 }
 
 function showDownloadError(button, message) {
@@ -378,8 +381,7 @@ async function searchLocal(wishId = null) {
         maxGb = rawMax === '' ? null : Number(rawMax);
     }
     if (minGb < 0 || (maxGb !== null && (maxGb < 0 || maxGb < minGb))) {
-        status('Enter a valid custom size range.');
-        return;
+        throw new Error('Enter a valid custom size range.');
     }
     const gib = 1024 ** 3;
     const params = new URLSearchParams({
@@ -1044,7 +1046,8 @@ function wishTimestamp(value) {
     return new Date(value.includes('T') ? value : value.replace(' ', 'T') + 'Z').toLocaleString();
 }
 
-async function refreshWishlist() {
+async function refreshWishlist(updateSummary = true) {
+    if (updateSummary) await refreshSummary();
     const state = $('#wishlist-state').value;
     const wishes = await api(`/api/wishlist?state=${state}`);
     if ($('#wishlist-state').value !== state) return;
@@ -1087,12 +1090,14 @@ async function refreshWishlist() {
         addAction(`${wish.result_count} linked result${wish.result_count === 1 ? '' : 's'}`, async () => {
             $('#local-query').value = wish.query;
             await searchLocal(wish.id);
+            $('#wishlist-dialog').close();
             $('#results').scrollIntoView({behavior: 'smooth'});
         });
         addAction('Search local', async () => {
             $('#local-query').value = wish.query;
             $('#match-mode').value = 'all';
             await searchLocal();
+            $('#wishlist-dialog').close();
             $('#local-query').scrollIntoView({behavior: 'smooth'});
         });
         const crawl = addAction('Crawl selected source', async () => {
@@ -1115,7 +1120,13 @@ async function refreshWishlist() {
         list.append(row);
     }
 }
-$('#wishlist-state').onchange = () => refreshWishlist().catch(error => status(error.message));
+$('#open-wishlist').onclick = async () => {
+    $('#wish-status').textContent = '';
+    $('#wishlist-dialog').showModal();
+    try { await refreshWishlist(); } catch (error) { $('#wish-status').textContent = error.message; }
+};
+$('#close-wishlist-dialog').onclick = () => $('#wishlist-dialog').close();
+$('#wishlist-state').onchange = () => refreshWishlist().catch(error => { $('#wish-status').textContent = error.message; });
 $('#wish-form').onsubmit = async event => {
     event.preventDefault();
     try {
@@ -1137,7 +1148,7 @@ window.addEventListener('pageshow', event => {
 });
 setInterval(() => {
     if (currentUser) {
-        Promise.all([refreshJobs(), refreshSummary(), refreshWishlist()]).catch(() => {
+        Promise.all([refreshJobs(), refreshSummary(), refreshWishlist(false)]).catch(() => {
         });
     }
 }, 5000);
