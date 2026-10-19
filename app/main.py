@@ -55,6 +55,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 USERNAME = re.compile(r"[A-Za-z0-9_.-]{3,32}\Z")
 SESSION_COOKIE = "torrent_sniffer_session"
 SESSION_DAYS = 14
+ADULT_EXCLUSION_TERMS = ("porn", "xxx", "sex", "cum", "vagina", "penis")
 
 
 def _session_cookie_name() -> str:
@@ -1044,7 +1045,7 @@ def search_results(
     min_size_bytes: int = 0,
     max_size_bytes: int | None = None,
     min_seeders: int = 0,
-    sort: str = "discovered_desc",
+    sort: str = "seeders_desc",
     limit: int = 100,
     exclude: list[str] = Query(default=[]),
     _: dict[str, Any] = Depends(require_user),
@@ -1080,6 +1081,15 @@ def search_results(
     excluded_terms = list(
         dict.fromkeys(term for value in exclude[:50] for term in search_terms(value))
     )
+    if "porn" in excluded_terms:
+        # The visible porn filter includes related words implicitly. Explicit
+        # query words are allowed; separately entered exclusions still apply.
+        excluded_terms.remove("porn")
+        excluded_terms = list(
+            dict.fromkeys(
+                [*excluded_terms, *(term for term in ADULT_EXCLUSION_TERMS if term not in words)]
+            )
+        )
     for term in excluded_terms:
         filters.append(
             "search_contains(COALESCE(r.title, '') || ' ' || COALESCE(r.category, ''), ?) = 0"

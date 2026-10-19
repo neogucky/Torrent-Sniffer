@@ -189,6 +189,23 @@ h2, h3 {
     padding: 2px 7px;
 }
 
+button.remove-button {
+    display: inline-grid;
+    place-items: center;
+    width: 30px;
+    min-width: 30px;
+    padding: 5px;
+}
+.remove-button svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
 .account {
     display: flex;
     align-items: center;
@@ -644,6 +661,9 @@ article p {
 
 dialog {
     width: min(620px, calc(100vw - 28px));
+    max-height: 90vh;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
     color: #edf2fa;
     background: #121c2a;
     border: 1px solid #496181;
@@ -679,14 +699,9 @@ dialog footer {
     color: #ffcf8a;
 }
 
-.crawl-dialog-content {
-    max-height: min(70vh, 760px);
-}
-
 .crawl-dialog-content .jobs {
     display: grid;
     gap: 10px;
-    overflow: auto;
 }
 
 .crawl-dialog-content .jobs article {
@@ -727,7 +742,7 @@ textarea {
 .request-log {
     width: min(900px, calc(100vw - 28px));
     max-height: 84vh;
-    overflow: hidden;
+    overflow-y: auto;
     padding: 0;
     background: #0b1019;
     border: 1px solid #a8c6ff;
@@ -738,21 +753,7 @@ textarea {
 .request-log-content {
     display: grid;
     gap: 15px;
-    max-height: 84vh;
-    overflow: auto;
     padding: 22px;
-}
-
-.request-log-content > header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    position: sticky;
-    top: -22px;
-    z-index: 1;
-    padding: 0 0 8px;
-    background: #0b1019;
 }
 
 .request-log-content section {
@@ -785,6 +786,7 @@ textarea {
 #auth-dialog {
     width: min(430px, calc(100vw - 28px));
 }
+.auth-heading { display: grid; gap: 8px; }
 
 .settings {
     display: grid;
@@ -936,30 +938,46 @@ textarea {
 #wishlist-dialog { width: min(850px, calc(100vw - 28px)); max-height: 85vh; overflow-y: auto; }
 .wishlist-dialog-content { display: grid; gap: 15px; padding: 22px; }
 .wishlist-dialog-content h2 { font-size: 1.2rem; }
-.wishlist-filter { display: flex; align-items: center; gap: 10px; justify-self: start; }
-.wishlist-filter select { width: auto; }
-.wish-row, .wish-actions {
-    display: flex;
+.wishlist-tabs { display: flex; gap: 6px; border-bottom: 1px solid #2b384c; }
+.wishlist-tabs button { border: 0; border-radius: 7px 7px 0 0; background: transparent; padding: 9px 16px; color: #9cacc1; border-bottom: 2px solid transparent; }
+.wishlist-tabs button[aria-selected="true"] { color: #a8c6ff; border-bottom-color: #a8c6ff; background: #1c2c43; }
+.wish-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
     gap: 12px;
-    flex-wrap: wrap;
 }
 .wishlist-dialog-content .wish-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: 12px; padding: 0; }
 #wish-status:empty { display: none; }
 .account .wishlist-button { position: relative; margin-right: 8px; }
 .account .wishlist-count { position: absolute; top: -9px; right: -11px; min-width: 19px; padding: 1px 4px; border-radius: 10px; color: #0b1019; background: #a8c6ff; border: 2px solid #0b1019; font-size: 10px; line-height: 14px; }
 .wish-row { padding: 14px 0; border-top: 1px solid #2b384c; }
-.wish-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
-.wish-row p { margin: 5px 0 0; font-size: .78rem; }
-.wish-actions { justify-content: flex-start; gap: 6px; }
-.wish-actions button { min-height: 30px; padding: 5px 8px; font-size: .78rem; }
+.wish-row > div:first-child { min-width: 0; }
+.wish-row strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wish-row p { margin: 5px 0 0; font-size: .78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wish-result-count { font-variant-numeric: tabular-nums; }
+.wish-actions { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.wish-actions button { min-height: 30px; padding: 5px 8px; font-size: .78rem; white-space: nowrap; }
+.wish-actions .remove-button { padding: 5px; }
 #source-auth-fields { display: grid; gap: 7px; }
 #source-auth-fields p { margin: 0; font-size: .8rem; }
 #source-dialog { max-height: 90vh; overflow-y: auto; }
+/* Every modal has one scrolling surface and an opaque, pinned header. */
+dialog > :first-child { padding: 0 22px 22px; }
+dialog > :first-child > header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    margin: 0 -22px;
+    padding: 18px 22px 14px;
+    background: #121c2a;
+    border-bottom: 1px solid #2b384c;
+}
+dialog > :first-child > header > button { flex: 0 0 auto; }
 @media (max-width: 760px) {
     .wishlist-dialog-content .wish-form { grid-template-columns: 1fr auto; }
     .wish-form > label:first-child { grid-column: span 2; }
+    .wish-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 }
 
 #source-auth-request-headers { width: 100%; min-height: 140px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }

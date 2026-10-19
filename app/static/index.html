@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Torrent Sniffer</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261019-8">
+    <link rel="stylesheet" href="/static/styles.css?v=20261019-9">
 </head>
 <body>
 <main id="app" hidden>
@@ -79,17 +79,11 @@
             <summary id="size-summary">Size</summary>
             <div class="filter-menu"><select id="size-filter">
                 <option value="all">All sizes</option>
-                <option value="small">Too small · under 4 GB</option>
-                <optgroup label="Movies">
-                    <option value="movie-standard">4–10 GB</option>
-                    <option value="movie-large">8–16 GB</option>
-                    <option value="movie-huge">16+ GB</option>
-                </optgroup>
-                <optgroup label="Series">
-                    <option value="series-compact">10–30 GB</option>
-                    <option value="series-standard">20–50 GB</option>
-                    <option value="series-large">50+ GB</option>
-                </optgroup>
+                <option value="small">Small · under 4 GB</option>
+                <option value="movie-medium">Medium movies · 4–10 GB</option>
+                <option value="movie-hd">HD movies · 8–16 GB</option>
+                <option value="movie-4k">4K movies · 14 GB+</option>
+                <option value="series-4k">4K series · 20 GB+</option>
                 <option value="custom">Custom range…</option>
             </select>
                 <button type="button" id="clear-size">Clear</button>
@@ -116,7 +110,7 @@
                 <option value="size_asc">Smallest first</option>
             </optgroup>
             <optgroup label="Seeders">
-                <option value="seeders_desc">Most seeders first</option>
+                <option value="seeders_desc" selected>Most seeders first</option>
                 <option value="seeders_asc">Fewest seeders first</option>
             </optgroup>
         </select></label>
@@ -136,14 +130,17 @@
             <h2 id="wishlist-heading">Wishlist</h2>
             <button type="button" class="icon-button" id="close-wishlist-dialog" aria-label="Close wishlist">×</button>
         </header>
+        <div class="wishlist-tabs" role="tablist" aria-label="Wishlist views">
+            <button type="button" id="wishlist-tab" role="tab" data-state="active" aria-selected="true" aria-controls="wishlist-items">Wishlist</button>
+            <button type="button" id="archive-tab" role="tab" data-state="archived" aria-selected="false" aria-controls="wishlist-items" tabindex="-1">Archive</button>
+        </div>
         <form id="wish-form" class="wish-form">
             <label>Movie or series<input id="wish-query" placeholder="Title or search term" maxlength="180" required></label>
             <label>Type<select id="wish-kind"><option value="movie">Movie</option><option value="series">Series</option></select></label>
             <button type="submit">Add to wishlist</button>
         </form>
-        <label class="wishlist-filter">Show<select id="wishlist-state"><option value="active">Wishlist</option><option value="archived">Archive</option></select></label>
         <p id="wish-status" class="hint" aria-live="polite"></p>
-        <div id="wishlist-items"></div>
+        <div id="wishlist-items" role="tabpanel" aria-labelledby="wishlist-tab"></div>
     </div>
 </dialog>
 <dialog id="source-dialog">
@@ -202,7 +199,7 @@
 </template>
 <dialog id="auth-dialog">
     <form id="auth-form" method="dialog">
-        <a class="home-link" href="/" aria-label="Alphane home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6"/></svg>Home</a><header><h2 id="auth-title">Log in</h2></header>
+        <header><div class="auth-heading"><a class="home-link" href="/" aria-label="Alphane home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6"/></svg>Home</a><h2 id="auth-title">Log in</h2></div></header>
         <p id="auth-copy" class="hint"></p><label>Username<input id="auth-username" autocomplete="username"
                                                                  required></label><label>Password<input
             id="auth-password" type="password" autocomplete="current-password" required></label><label
@@ -306,7 +303,7 @@
         <header><h2>Exclude matches</h2>
             <button type="button" class="icon-button" id="close-exclude-dialog" aria-label="Close">×</button>
         </header>
-        <p class="hint">Enter comma-separated words. Results containing any of these words in the title will be excluded.</p>
+        <p class="hint">Exclude comma-separated words from titles and categories. “porn” includes related adult terms, allowing words used in your query.</p>
         <label>Excluded words<input id="exclude-terms" placeholder="porn, example"></label>
         <p id="exclude-error" class="error"></p>
         <footer>
@@ -336,6 +333,6 @@
         <div id="crawl-dialog-jobs" class="jobs"></div>
     </div>
 </dialog>
-<script src="/static/app.js?v=20261019-8"></script>
+<script src="/static/app.js?v=20261019-9"></script>
 </body>
 </html>

@@ -4,6 +4,7 @@ const status = (message = '') => {
 };
 let sources = [];
 let wishlistRenderKey = "";
+let wishlistState = 'active';
 let jobs = [];
 let adapters = [];
 let editingSourceId = null;
@@ -120,6 +121,14 @@ function sourceName(source) {
     }
 }
 
+function setRemoveIcon(button, label) {
+    button.type = 'button';
+    button.classList.add('remove-button');
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>';
+}
+
 async function refreshSources() {
     sources = await api('/api/sources');
     const select = $('#source-select');
@@ -217,7 +226,7 @@ function taskCard(job) {
     if (job.state === 'failed') actions.append(actionButton('Retry this page', 'retry', job), actionButton('Mark complete', 'complete', job));
     if (job.state !== 'running') {
         const remove = document.createElement('button');
-        remove.textContent = 'Remove';
+        setRemoveIcon(remove, `Remove task “${job.query}”`);
         remove.onclick = () => deleteTask(job);
         actions.append(remove);
     }
@@ -367,12 +376,12 @@ function showDownloadError(button, message) {
     if (!$('#download-error-dialog').open) $('#download-error-dialog').showModal();
 }
 
-async function searchLocal(wishId = null) {
+async function searchLocal() {
     const rawQuery = $('#local-query').value.trim();
     const list = $('#results');
     const ranges = {
-        all: [0, null], small: [0, 4], 'movie-standard': [4, 10], 'movie-large': [8, 16], 'movie-huge': [16, null],
-        'series-compact': [10, 30], 'series-standard': [20, 50], 'series-large': [50, null]
+        all: [0, null], small: [0, 4], 'movie-medium': [4, 10], 'movie-hd': [8, 16],
+        'movie-4k': [14, null], 'series-4k': [20, null]
     };
     let [minGb, maxGb] = ranges[$('#size-filter').value] || [0, null];
     if ($('#size-filter').value === 'custom') {
@@ -385,13 +394,12 @@ async function searchLocal(wishId = null) {
     }
     const gib = 1024 ** 3;
     const params = new URLSearchParams({
-        q: wishId ? "" : rawQuery,
+        q: rawQuery,
         match_mode: $('#match-mode').value,
         min_size_bytes: String(Math.round(minGb * gib)),
         min_seeders: $('#seeder-filter').value,
         sort: $('#sort-results').value
     });
-    if (wishId) params.set('wishlist_id', String(wishId));
     excludedTerms.forEach(term => params.append('exclude', term));
     if (maxGb !== null) params.set('max_size_bytes', String(Math.round(maxGb * gib)));
     const results = await api(`/api/results?${params}`);
@@ -725,6 +733,18 @@ function closeFilter(control) {
     control.closest('details').open = false;
 }
 
+document.addEventListener('click', event => {
+    document.querySelectorAll('.filter-chip[open]').forEach(filter => {
+        if (!filter.contains(event.target)) filter.open = false;
+    });
+});
+
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') {
+        document.querySelectorAll('.filter-chip[open]').forEach(filter => { filter.open = false; });
+    }
+});
+
 $('#size-filter').onchange = () => {
     if ($('#size-filter').value === 'custom') openCustomSizeDialog(); else {
         closeFilter($('#size-filter'));
@@ -826,7 +846,7 @@ function addQbittorrentLocation(location = {label: '', path: ''}) {
     path.value = location.path;
     const remove = document.createElement('button');
     remove.type = 'button';
-    remove.textContent = 'Remove';
+    setRemoveIcon(remove, 'Remove file location');
     remove.onclick = () => row.remove();
     row.append(label, path, remove);
     $('#qbit-locations').append(row);
@@ -854,9 +874,9 @@ async function loadUsers() {
         edit.onclick = () => openUserDialog(user);
         const remove = document.createElement('button');
         remove.type = 'button';
-        remove.textContent = 'Remove';
+        setRemoveIcon(remove, `Remove user “${user.username}”`);
         remove.disabled = user.id === currentUser.id;
-        remove.title = remove.disabled ? 'You cannot remove your own account' : '';
+        if (remove.disabled) remove.title = 'You cannot remove your own account';
         remove.onclick = () => removeUser(user);
         actions.append(edit, remove);
         item.append(label, actions);
@@ -1048,9 +1068,9 @@ function wishTimestamp(value) {
 
 async function refreshWishlist(updateSummary = true) {
     if (updateSummary) await refreshSummary();
-    const state = $('#wishlist-state').value;
+    const state = wishlistState;
     const wishes = await api(`/api/wishlist?state=${state}`);
-    if ($('#wishlist-state').value !== state) return;
+    if (wishlistState !== state) return;
     const renderKey = JSON.stringify([state, wishes, sources.map(source => source.id)]);
     if (renderKey === wishlistRenderKey) return;
     wishlistRenderKey = renderKey;
@@ -1068,10 +1088,15 @@ async function refreshWishlist(updateSummary = true) {
         const info = document.createElement('div');
         const title = document.createElement('strong');
         title.textContent = wish.query;
+        title.title = wish.query;
         const meta = document.createElement('p');
         meta.className = 'hint';
         const crawlState = wish.active_crawls ? `${wish.active_crawls} active crawl(s)` : wish.last_crawled_at ? `Last crawled ${wishTimestamp(wish.last_crawled_at)}` : wish.crawl_count ? 'Crawl queued, stopped or failed' : 'Not crawled yet';
-        meta.textContent = [wish.kind === 'unspecified' ? 'Search term' : wish.kind, crawlState, wish.status === 'archived' && wish.archived_at ? `Archived ${wishTimestamp(wish.archived_at)}` : ''].filter(Boolean).join(' · ');
+        const count = document.createElement('span');
+        count.className = 'wish-result-count';
+        count.textContent = `${wish.result_count} linked result${wish.result_count === 1 ? '' : 's'}`;
+        meta.append(count, ` · ${[wish.kind === 'unspecified' ? 'Search term' : wish.kind, crawlState, wish.status === 'archived' && wish.archived_at ? `Archived ${wishTimestamp(wish.archived_at)}` : ''].filter(Boolean).join(' · ')}`);
+        meta.title = meta.textContent;
         info.append(title, meta);
         const actions = document.createElement('div');
         actions.className = 'wish-actions';
@@ -1087,12 +1112,6 @@ async function refreshWishlist(updateSummary = true) {
             actions.append(button);
             return button;
         };
-        addAction(`${wish.result_count} linked result${wish.result_count === 1 ? '' : 's'}`, async () => {
-            $('#local-query').value = wish.query;
-            await searchLocal(wish.id);
-            $('#wishlist-dialog').close();
-            $('#results').scrollIntoView({behavior: 'smooth'});
-        });
         addAction('Search local', async () => {
             $('#local-query').value = wish.query;
             $('#match-mode').value = 'all';
@@ -1100,22 +1119,23 @@ async function refreshWishlist(updateSummary = true) {
             $('#wishlist-dialog').close();
             $('#local-query').scrollIntoView({behavior: 'smooth'});
         });
-        const crawl = addAction('Crawl selected source', async () => {
+        const crawl = addAction('Crawl', async () => {
             await api('/api/jobs', {method: 'POST', body: JSON.stringify({source_id: Number($('#source-select').value), query: wish.query})});
             $('#local-query').value = wish.query;
             await refreshAll();
             $('#wish-status').textContent = `Crawl queued for “${wish.query}”.`;
         });
+        crawl.title = 'Crawl selected source';
         crawl.disabled = !sources.length;
         addAction(wish.status === 'active' ? 'Archive' : 'Restore', async () => {
             await api(`/api/wishlist/${wish.id}`, {method: 'PATCH', body: JSON.stringify({status: wish.status === 'active' ? 'archived' : 'active'})});
             await refreshWishlist();
         });
-        addAction('Remove', async () => {
-            if (!confirm(`Remove “${wish.query}” from the wishlist? Collected results stay.`)) return;
+        const remove = addAction('', async () => {
             await api(`/api/wishlist/${wish.id}`, {method: 'DELETE'});
             await refreshWishlist();
         });
+        setRemoveIcon(remove, `Remove “${wish.query}” from wishlist`);
         row.append(info, actions);
         list.append(row);
     }
@@ -1126,13 +1146,35 @@ $('#open-wishlist').onclick = async () => {
     try { await refreshWishlist(); } catch (error) { $('#wish-status').textContent = error.message; }
 };
 $('#close-wishlist-dialog').onclick = () => $('#wishlist-dialog').close();
-$('#wishlist-state').onchange = () => refreshWishlist().catch(error => { $('#wish-status').textContent = error.message; });
+function setWishlistState(state) {
+    wishlistState = state;
+    document.querySelectorAll('.wishlist-tabs [role="tab"]').forEach(tab => {
+        const selected = tab.dataset.state === state;
+        tab.setAttribute('aria-selected', String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        if (selected) $('#wishlist-items').setAttribute('aria-labelledby', tab.id);
+    });
+}
+const wishlistTabs = [...document.querySelectorAll('.wishlist-tabs [role="tab"]')];
+wishlistTabs.forEach((tab, index) => {
+    tab.onclick = () => {
+        setWishlistState(tab.dataset.state);
+        refreshWishlist().catch(error => { $('#wish-status').textContent = error.message; });
+    };
+    tab.addEventListener('keydown', event => {
+        const next = {ArrowLeft: (index + wishlistTabs.length - 1) % wishlistTabs.length, ArrowRight: (index + 1) % wishlistTabs.length, Home: 0, End: wishlistTabs.length - 1}[event.key];
+        if (next === undefined) return;
+        event.preventDefault();
+        wishlistTabs[next].focus();
+        wishlistTabs[next].click();
+    });
+});
 $('#wish-form').onsubmit = async event => {
     event.preventDefault();
     try {
         const wish = await api('/api/wishlist', {method: 'POST', body: JSON.stringify({query: $('#wish-query').value, kind: $('#wish-kind').value})});
         $('#wish-query').value = '';
-        $('#wishlist-state').value = wish.status;
+        setWishlistState(wish.status);
         await refreshWishlist();
         $('#wish-status').textContent = wish.status === 'archived' ? 'This term is already archived. Use Restore to add it back.' : 'Saved to wishlist.';
     } catch (error) { $('#wish-status').textContent = error.message; }
