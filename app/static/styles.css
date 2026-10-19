@@ -930,3 +930,31 @@ textarea {
         max-width: calc(100% - 28px);
     }
 }
+
+.wishlist-heading, .wish-row, .wish-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.wishlist-heading h2 { font-size: 1.2rem; }
+.wishlist-heading label { display: flex; align-items: center; }
+.wish-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: 12px; margin-top: 16px; }
+#wishlist-items { max-height: 420px; overflow-y: auto; }
+.wish-row { padding: 14px 0; border-top: 1px solid #35483c; }
+.wish-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.wish-row p { margin: 5px 0 0; font-size: .78rem; }
+.wish-actions { justify-content: flex-start; gap: 6px; }
+.wish-actions button { min-height: 30px; padding: 5px 8px; font-size: .78rem; }
+#source-auth-fields { display: grid; gap: 12px; border: 1px solid #43564a; border-radius: 8px; padding: 14px; }
+#source-auth-fields[hidden], #source-password-fields[hidden], #source-cookie-field[hidden] { display: none; }
+#source-password-fields { display: grid; gap: 12px; }
+#source-auth-fields p { margin: 0; font-size: .8rem; line-height: 1.5; }
+#source-auth-fields details p { margin: 10px 0; }
+#source-login-link { color: #8ce5a1; }
+#source-dialog { max-height: 90vh; overflow-y: auto; }
+@media (max-width: 760px) {
+    .wish-form { grid-template-columns: 1fr auto; }
+    .wish-form > label:first-child { grid-column: span 2; }
+}

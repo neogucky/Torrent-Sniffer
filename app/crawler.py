@@ -13,6 +13,8 @@ from typing import Any
 
 from .adapters import AdapterError, get_adapter
 from .database import connect
+from .source_auth import SourceAuthError, SourceHTTPError, fetch_source_html
+from .wishlist import ensure_wish, link_result
 
 USER_AGENT = "ResearchIndex/0.1 (+local metadata research; contact: local-user)"
 MAX_ATTEMPTS = 5
@@ -31,13 +33,15 @@ def build_search_url(
 ) -> str:
     search = adapter["search"]
     encoded_query = (
-        urllib.parse.quote(query, safe="")
+        urllib.parse.quote(query, safe="", encoding=search.get("charset", "utf-8"))
         if search.get("query_encoding", "percent") == "percent"
         else query
     )
     page_offset = int(search.get("page_offset", 0))
     path = str(search["path_template"]).format(
-        query=encoded_query, page=page + page_offset
+        query=encoded_query,
+        page=page + page_offset,
+        offset=(page - 1) * int(search.get("page_size", 1)),
     )
     return urllib.parse.urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
 
@@ -134,7 +138,9 @@ def _field_value(
                 (href, text)
                 for cell in row
                 for href, text in cell["links"]
-                if href and needle in href and (rule.get("value") == "href" or text.strip())
+                if href
+                and needle in href
+                and (rule.get("value") == "href" or text.strip())
             ),
             None,
         )
@@ -169,7 +175,11 @@ def _field_value(
         ):
             cell = row[int(rule["fallback_index"])]
         if cell:
-            raw = str(cell["text"])
+            raw = (
+                str(cell.get("attrs", {}).get(rule["value_attribute"], ""))
+                if "value_attribute" in rule
+                else str(cell["text"])
+            )
     if raw is None or not raw.strip():
         return None
     raw = raw.replace("\xa0", " ")
@@ -178,6 +188,16 @@ def _field_value(
         if not match:
             return None
         raw = match.group(1) if match.lastindex else match.group(0)
+    if rule.get("as") == "bytes_size":
+        try:
+            return f"{int(raw)} B"
+        except ValueError:
+            return raw
+    if rule.get("as") == "unix_date":
+        try:
+            return datetime.fromtimestamp(int(raw), UTC).date().isoformat()
+        except (ValueError, OverflowError, OSError):
+            return None
     if rule.get("as") == "integer":
         digits = re.sub(r"[^0-9]", "", raw)
         return int(digits) if digits else None
@@ -252,9 +272,11 @@ def parse_torrent_date(value: str) -> str | None:
             pass
     try:
         # Some sources omit the year for recent uploads, e.g. "01-18 17:41".
-        return datetime.strptime(
-            f"{today.year}-{normalised}", "%Y-%m-%d %H:%M"
-        ).date().isoformat()
+        return (
+            datetime.strptime(f"{today.year}-{normalised}", "%Y-%m-%d %H:%M")
+            .date()
+            .isoformat()
+        )
     except ValueError:
         pass
     return None
@@ -263,6 +285,9 @@ def parse_torrent_date(value: str) -> str | None:
 def parse_results(
     html: str, base_url: str, adapter: dict[str, Any]
 ) -> list[ParsedResult]:
+    base_url = urllib.parse.urljoin(
+        base_url.rstrip("/") + "/", adapter["result"].get("base_path", "")
+    )
     parser = SearchTableParser()
     parser.feed(html)
     fields = adapter["result"]["fields"]
@@ -331,6 +356,8 @@ def has_next_page(html: str, current_page: int, adapter: dict[str, Any]) -> bool
     )
     pages = [int(value) for value in matches if str(value).isdigit()]
     source_page = current_page + int(adapter.get("search", {}).get("page_offset", 0))
+    if adapter.get("pagination", {}).get("offset"):
+        source_page = (current_page - 1) * int(adapter["search"].get("page_size", 1))
     return any(page > source_page for page in pages)
 
 
@@ -358,15 +385,9 @@ def fetch_magnet_now(result_id: int) -> str | None:
     if item["magnet_link"]:
         return item["magnet_link"]
     try:
-        request = urllib.request.Request(
-            item["details_url"],
-            headers={"User-Agent": USER_AGENT, "Accept": "text/html"},
+        html, http_status = fetch_source_html(
+            item["source_id"], item["details_url"], get_adapter(item["kind"])
         )
-        with urllib.request.urlopen(request, timeout=25) as response:
-            html = response.read().decode(
-                response.headers.get_content_charset() or "utf-8", errors="replace"
-            )
-            http_status = response.status
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as error:
         _record_direct_magnet_result(
             item, "failed", getattr(error, "code", None), None, error
@@ -448,12 +469,7 @@ def run_one_job() -> bool:
             )
             task = job
             request_type = "search"
-            url = build_search_url(
-                get_adapter(job["kind"]),
-                job["base_url"],
-                job["query"],
-                job["next_page"],
-            )
+            url = job["base_url"]
         else:
             task = db.execute(
                 """SELECT d.*, j.query, j.status AS job_status, j.page_complete,
@@ -476,14 +492,16 @@ def run_one_job() -> bool:
             url = task["details_url"]
 
     try:
-        request = urllib.request.Request(
-            url, headers={"User-Agent": USER_AGENT, "Accept": "text/html"}
-        )
-        with urllib.request.urlopen(request, timeout=25) as response:
-            html = response.read().decode(
-                response.headers.get_content_charset() or "utf-8", errors="replace"
+        if request_type == "search":
+            url = build_search_url(
+                get_adapter(task["kind"]),
+                task["base_url"],
+                task["query"],
+                task["next_page"],
             )
-            http_status = response.status
+        html, http_status = fetch_source_html(
+            task["source_id"], url, get_adapter(task["kind"])
+        )
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as error:
         _reschedule_failure(task, request_type, url, error)
         return True
@@ -508,6 +526,7 @@ def _complete_search_request(
         wait_after, adjustment = _adjust_source_delay(db, job, succeeded=True)
         next_allowed = iso(utc_now() + timedelta(seconds=wait_after))
         new_results = 0
+        wish_id = job["wishlist_id"] or ensure_wish(db, job["query"])
         for item in results:
             already_saved = db.execute(
                 "SELECT 1 FROM results WHERE source_id=? AND details_url=?",
@@ -537,6 +556,11 @@ def _complete_search_request(
                     item.torrent_created_at,
                 ),
             )
+            result_id = db.execute(
+                "SELECT id FROM results WHERE source_id=? AND details_url=?",
+                (job["source_id"], item.details_url),
+            ).fetchone()[0]
+            link_result(db, wish_id, result_id)
         db.execute(
             "UPDATE sources SET next_allowed_at=? WHERE id=?",
             (next_allowed, job["source_id"]),
@@ -569,17 +593,25 @@ def _complete_search_request(
         )
 
 
-def extraction_diagnostics(results: list[ParsedResult], adapter: dict[str, Any]) -> str | None:
+def extraction_diagnostics(
+    results: list[ParsedResult], adapter: dict[str, Any]
+) -> str | None:
     if not results:
-        return "No result rows matched; check the adapter rules if results were expected."
+        return (
+            "No result rows matched; check the adapter rules if results were expected."
+        )
     missing = []
     for name in adapter["result"]["fields"]:
         count = sum(getattr(item, name, None) is None for item in results)
         if count:
             missing.append(f"{name}: {count}/{len(results)} missing")
-    invalid_sizes = sum(item.size is not None and item.size_bytes is None for item in results)
+    invalid_sizes = sum(
+        item.size is not None and item.size_bytes is None for item in results
+    )
     if invalid_sizes:
-        missing.append(f"size: {invalid_sizes}/{len(results)} could not be converted to bytes")
+        missing.append(
+            f"size: {invalid_sizes}/{len(results)} could not be converted to bytes"
+        )
     return "Extraction warning: " + "; ".join(missing) if missing else None
 
 
@@ -617,9 +649,13 @@ def _complete_detail_request(
 def _reschedule_failure(
     item: sqlite3.Row, request_type: str, url: str, error: Exception
 ) -> None:
-    attempts = item["attempt_count"] + 1
+    attempts = (
+        MAX_ATTEMPTS
+        if isinstance(error, (SourceAuthError, UnicodeEncodeError))
+        else item["attempt_count"] + 1
+    )
     retry_after_seconds = 0
-    if isinstance(error, urllib.error.HTTPError):
+    if isinstance(error, (urllib.error.HTTPError, SourceHTTPError)):
         retry_after = error.headers.get("Retry-After")
         if retry_after and retry_after.isdigit():
             retry_after_seconds = min(int(retry_after), 24 * 60 * 60)

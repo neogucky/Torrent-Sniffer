@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Torrent Sniffer</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260915-2">
+    <link rel="stylesheet" href="/static/styles.css?v=20261019-1">
 </head>
 <body>
 <main id="app" hidden>
@@ -48,6 +48,19 @@
             </div>
         </aside>
     </header>
+    <section class="panel wishlist-panel" aria-labelledby="wishlist-heading">
+        <header class="wishlist-heading">
+            <h2 id="wishlist-heading">Wishlist</h2>
+            <label>Show<select id="wishlist-state"><option value="active">Wishlist</option><option value="archived">Archive</option></select></label>
+        </header>
+        <form id="wish-form" class="wish-form">
+            <label>Movie or series<input id="wish-query" placeholder="Title or search term" maxlength="180" required></label>
+            <label>Type<select id="wish-kind"><option value="movie">Movie</option><option value="series">Series</option></select></label>
+            <button type="submit">Add to wishlist</button>
+        </form>
+        <p id="wish-status" class="hint" aria-live="polite"></p>
+        <div id="wishlist-items"></div>
+    </section>
     <section class="panel controls workflow-panel">
         <span class="step-number" aria-hidden="true">1</span>
         <label class="source-choice">Source<select id="source-select"></select></label>
@@ -140,7 +153,27 @@
         <label>Source URL<input id="source-url" placeholder="https://authorised-source.example" type="url"
                                 required></label><label>Initial pause (seconds)<input id="delay" type="number" min="1"
                                                                                       value="20" required></label>
+        <fieldset id="source-auth-fields" hidden>
+            <legend>Source account</legend>
+            <label>Login method<select id="source-auth-mode">
+                <option value="password">Saved username and password</option>
+                <option value="cookie">Browser session cookie</option>
+                <option value="none">Configure later</option>
+            </select></label>
+            <div id="source-password-fields">
+                <label>Username<input id="source-auth-username" autocomplete="off" maxlength="256"></label>
+                <label>Password<input id="source-auth-password" type="password" autocomplete="new-password" maxlength="1024"></label>
+            </div>
+            <label id="source-cookie-field" hidden>Cookie request header<input id="source-auth-cookie" type="password" autocomplete="off" maxlength="16384"></label>
+            <p class="hint">Login details are encrypted in runtime storage. Blank fields keep a saved login. Changing the source URL requires entering the login again.</p>
+            <details><summary>Use a browser session when login requires a CAPTCHA</summary>
+                <p class="hint">Log in at the configured source in your browser. In developer tools, open Network, load the tracker page, select its request and copy the Cookie request header value. Choose Browser session cookie and paste it above. Replace it when the session expires. Use a browser on the same network as the server.</p>
+                <a id="source-login-link" target="_blank" rel="noopener noreferrer">Open source login</a>
+            </details>
+        </fieldset>
+        <p id="source-error" class="error" aria-live="polite"></p>
         <footer>
+            <button type="submit" id="save-test-source" value="test" hidden>Save and test login</button>
             <button type="button" id="cancel-source">Cancel</button>
             <button class="primary" value="default">Save source</button>
         </footer>
@@ -306,6 +339,6 @@
         <div id="crawl-dialog-jobs" class="jobs"></div>
     </div>
 </dialog>
-<script src="/static/app.js?v=20260915-2"></script>
+<script src="/static/app.js?v=20261019-1"></script>
 </body>
 </html>

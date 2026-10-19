@@ -3,6 +3,7 @@ const status = (message = '') => {
     $('#status').textContent = message;
 };
 let sources = [];
+let wishlistRenderKey = "";
 let jobs = [];
 let adapters = [];
 let editingSourceId = null;
@@ -338,6 +339,7 @@ async function refreshQbittorrent() {
 
 async function refreshAll() {
     await Promise.all([refreshAdapters(), refreshSources(), refreshJobs(), refreshSummary(), refreshQbittorrent()]);
+    await refreshWishlist();
 }
 
 function showDownloadError(button, message) {
@@ -349,7 +351,7 @@ function showDownloadError(button, message) {
     if (!$('#download-error-dialog').open) $('#download-error-dialog').showModal();
 }
 
-async function searchLocal() {
+async function searchLocal(wishId = null) {
     const rawQuery = $('#local-query').value.trim();
     const list = $('#results');
     const ranges = {
@@ -368,12 +370,13 @@ async function searchLocal() {
     }
     const gib = 1024 ** 3;
     const params = new URLSearchParams({
-        q: rawQuery,
+        q: wishId ? "" : rawQuery,
         match_mode: $('#match-mode').value,
         min_size_bytes: String(Math.round(minGb * gib)),
         min_seeders: $('#seeder-filter').value,
         sort: $('#sort-results').value
     });
+    if (wishId) params.set('wishlist_id', String(wishId));
     excludedTerms.forEach(term => params.append('exclude', term));
     if (maxGb !== null) params.set('max_size_bytes', String(Math.round(maxGb * gib)));
     const results = await api(`/api/results?${params}`);
@@ -403,7 +406,7 @@ async function searchLocal() {
                 try {
                     await api(`/api/results/${result.id}/qbittorrent`, {
                         method: 'POST',
-                        body: JSON.stringify({location_label: locationSelect.value})
+                        body: JSON.stringify({location_label: locationSelect.value, query: rawQuery})
                     });
                     button.classList.remove('download-error');
                     button.classList.add('download-success');
@@ -411,6 +414,7 @@ async function searchLocal() {
                     button.title = 'Download sent to qBittorrent';
                     button.setAttribute('aria-label', 'Download sent');
                     status(`Sent to qBittorrent (${locationSelect.value}).`);
+                    await refreshWishlist();
                 } catch (error) {
                     showDownloadError(button, error.message);
                     status(error.message);
@@ -419,6 +423,16 @@ async function searchLocal() {
         };
         const showMagnet = (magnetLink, button) => {
             magnet.href = magnetLink;
+            magnet.onclick = async event => {
+                event.preventDefault();
+                try {
+                    await api(`/api/results/${result.id}/downloaded`, {method: 'POST', body: JSON.stringify({query: rawQuery})});
+                    window.location.href = magnetLink;
+                    await refreshWishlist();
+                } catch (error) {
+                    status(error.message);
+                }
+            };
             magnet.hidden = false;
             button?.remove();
         };
@@ -513,6 +527,14 @@ function openSourceDialog(source = null) {
     $('#delay').value = source?.min_delay_seconds ?? 20;
     $('#add-adapter').hidden = !currentUser?.is_admin;
     $('#edit-adapter').hidden = !currentUser?.is_admin;
+    $('#source-error').textContent = source?.auth?.last_error || '';
+    $('#source-auth-mode').value = source?.auth?.mode && source.auth.mode !== 'none' ? source.auth.mode : 'password';
+    for (const id of ['username', 'password', 'cookie']) {
+        const field = $(`#source-auth-${id}`);
+        field.value = '';
+        field.placeholder = source?.auth?.mode && source.auth.mode !== 'none' ? 'Saved — leave blank to keep' : '';
+    }
+    updateSourceAuthFields();
     $('#source-dialog').showModal();
 }
 
@@ -559,16 +581,34 @@ $('#source-form').onsubmit = async (event) => {
         kind: $('#source-kind').value,
         min_delay_seconds: Number($('#delay').value)
     };
+    if (currentUser?.is_admin) {
+        payload.auth_mode = payload.kind === 'rutracker' ? $('#source-auth-mode').value : 'none';
+        payload.auth_username = $('#source-auth-username').value || null;
+        payload.auth_password = $('#source-auth-password').value || null;
+        payload.auth_cookie = $('#source-auth-cookie').value || null;
+    }
+    const button = event.submitter;
+    if (button) button.disabled = true;
+    $('#source-error').textContent = '';
     try {
-        await api(editingSourceId ? `/api/sources/${editingSourceId}` : '/api/sources', {
+        const saved = await api(editingSourceId ? `/api/sources/${editingSourceId}` : '/api/sources', {
             method: editingSourceId ? 'PUT' : 'POST',
             body: JSON.stringify(payload)
         });
+        editingSourceId = saved.id;
+        for (const id of ['username', 'password', 'cookie']) $(`#source-auth-${id}`).value = '';
+        if (button?.value === 'test') {
+            $('#source-error').textContent = 'Source saved. Testing login with source pacing…';
+            await api(`/api/sources/${saved.id}/login`, {method: 'POST'});
+        }
         $('#source-dialog').close();
         await refreshAll();
-        status('Source saved.');
+        status(button?.value === 'test' ? 'Source saved; login succeeded.' : 'Source saved.');
     } catch (error) {
-        status(error.message);
+        $('#source-error').textContent = error.message;
+        await refreshSources();
+    } finally {
+        if (button) button.disabled = false;
     }
 };
 $('#close-adapter-dialog').onclick = $('#cancel-adapter').onclick = () => $('#adapter-dialog').close();
@@ -894,6 +934,111 @@ $('#remove-qbit').onclick = async () => {
         $('#qbit-error').textContent = error.message;
     }
 };
+function updateSourceAuthFields() {
+    const enabled = currentUser?.is_admin && $('#source-kind').value === 'rutracker';
+    $('#source-auth-fields').hidden = !enabled;
+    $('#save-test-source').hidden = !enabled || $('#source-auth-mode').value === 'none';
+    $('#source-password-fields').hidden = $('#source-auth-mode').value !== 'password';
+    $('#source-cookie-field').hidden = $('#source-auth-mode').value !== 'cookie';
+    const link = $('#source-login-link');
+    link.removeAttribute('href');
+    try {
+        const base = new URL($('#source-url').value);
+        if (base.protocol === 'https:') link.href = new URL('forum/login.php', base.href.replace(/\/$/, '') + '/').href;
+    } catch {}
+}
+$('#source-kind').onchange = $('#source-auth-mode').onchange = $('#source-url').oninput = updateSourceAuthFields;
+$('#source-dialog').addEventListener('close', () => {
+    for (const id of ['username', 'password', 'cookie']) $(`#source-auth-${id}`).value = '';
+});
+
+function wishTimestamp(value) {
+    return new Date(value.includes('T') ? value : value.replace(' ', 'T') + 'Z').toLocaleString();
+}
+
+async function refreshWishlist() {
+    const state = $('#wishlist-state').value;
+    const wishes = await api(`/api/wishlist?state=${state}`);
+    if ($('#wishlist-state').value !== state) return;
+    const renderKey = JSON.stringify([state, wishes, sources.map(source => source.id)]);
+    if (renderKey === wishlistRenderKey) return;
+    wishlistRenderKey = renderKey;
+    const list = $('#wishlist-items');
+    list.replaceChildren();
+    if (!wishes.length) {
+        const empty = document.createElement('p');
+        empty.className = 'hint';
+        empty.textContent = state === 'active' ? 'Add a movie or series, or start a crawl to create a wish automatically.' : 'Downloaded wishes appear here.';
+        list.append(empty);
+    }
+    for (const wish of wishes) {
+        const row = document.createElement('div');
+        row.className = 'wish-row';
+        const info = document.createElement('div');
+        const title = document.createElement('strong');
+        title.textContent = wish.query;
+        const meta = document.createElement('p');
+        meta.className = 'hint';
+        const crawlState = wish.active_crawls ? `${wish.active_crawls} active crawl(s)` : wish.last_crawled_at ? `Last crawled ${wishTimestamp(wish.last_crawled_at)}` : wish.crawl_count ? 'Crawl queued, stopped or failed' : 'Not crawled yet';
+        meta.textContent = [wish.kind === 'unspecified' ? 'Search term' : wish.kind, crawlState, wish.status === 'archived' && wish.archived_at ? `Archived ${wishTimestamp(wish.archived_at)}` : ''].filter(Boolean).join(' · ');
+        info.append(title, meta);
+        const actions = document.createElement('div');
+        actions.className = 'wish-actions';
+        const addAction = (label, action) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.onclick = async () => {
+                button.disabled = true;
+                try { await action(); } catch (error) { $('#wish-status').textContent = error.message; }
+                finally { button.disabled = false; }
+            };
+            actions.append(button);
+            return button;
+        };
+        addAction(`${wish.result_count} linked result${wish.result_count === 1 ? '' : 's'}`, async () => {
+            $('#local-query').value = wish.query;
+            await searchLocal(wish.id);
+            $('#results').scrollIntoView({behavior: 'smooth'});
+        });
+        addAction('Search local', async () => {
+            $('#local-query').value = wish.query;
+            $('#match-mode').value = 'all';
+            await searchLocal();
+            $('#local-query').scrollIntoView({behavior: 'smooth'});
+        });
+        const crawl = addAction('Crawl selected source', async () => {
+            await api('/api/jobs', {method: 'POST', body: JSON.stringify({source_id: Number($('#source-select').value), query: wish.query})});
+            $('#local-query').value = wish.query;
+            await refreshAll();
+            $('#wish-status').textContent = `Crawl queued for “${wish.query}”.`;
+        });
+        crawl.disabled = !sources.length;
+        addAction(wish.status === 'active' ? 'Archive' : 'Restore', async () => {
+            await api(`/api/wishlist/${wish.id}`, {method: 'PATCH', body: JSON.stringify({status: wish.status === 'active' ? 'archived' : 'active'})});
+            await refreshWishlist();
+        });
+        addAction('Remove', async () => {
+            if (!confirm(`Remove “${wish.query}” from the wishlist? Collected results stay.`)) return;
+            await api(`/api/wishlist/${wish.id}`, {method: 'DELETE'});
+            await refreshWishlist();
+        });
+        row.append(info, actions);
+        list.append(row);
+    }
+}
+$('#wishlist-state').onchange = () => refreshWishlist().catch(error => status(error.message));
+$('#wish-form').onsubmit = async event => {
+    event.preventDefault();
+    try {
+        const wish = await api('/api/wishlist', {method: 'POST', body: JSON.stringify({query: $('#wish-query').value, kind: $('#wish-kind').value})});
+        $('#wish-query').value = '';
+        $('#wishlist-state').value = wish.status;
+        await refreshWishlist();
+        $('#wish-status').textContent = wish.status === 'archived' ? 'This term is already archived. Use Restore to add it back.' : 'Saved to wishlist.';
+    } catch (error) { $('#wish-status').textContent = error.message; }
+};
+
 $('#open-active').onclick = () => openCrawlDialog('active');
 $('#open-crawls').onclick = () => openCrawlDialog('all');
 $('#close-crawl-dialog').onclick = () => $('#crawl-dialog').close();
@@ -904,7 +1049,7 @@ window.addEventListener('pageshow', event => {
 });
 setInterval(() => {
     if (currentUser) {
-        Promise.all([refreshJobs(), refreshSummary()]).catch(() => {
+        Promise.all([refreshJobs(), refreshSummary(), refreshWishlist()]).catch(() => {
         });
     }
 }, 5000);

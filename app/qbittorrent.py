@@ -75,6 +75,9 @@ def add_magnet(magnet_link: str, location_label: str) -> None:
     )
     try:
         with urllib.request.urlopen(request, timeout=25) as response:
+            body = response.read().decode("utf-8", errors="replace").strip()
+            if body.lower() == "fails.":
+                raise RuntimeError("qBittorrent rejected the download")
             if response.status not in {200, 201}:
                 raise RuntimeError(f"qBittorrent returned HTTP {response.status}")
     except urllib.error.HTTPError as error:

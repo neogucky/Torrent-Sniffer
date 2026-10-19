@@ -16,3 +16,5 @@ Each adapter has an `id`, `label`, a search URL template, a pagination-link patt
 - `as`: `integer` or `url` when conversion is required.
 
 Create or edit an adapter in the source dialog, then select it for a source.
+
+The built-in account connector is stored at `app/rutracker_adapter.json`, independent of the editable adapter volume. Its source URL and login settings belong in the running app, never in an adapter definition. The additional parser rules it uses are `search.charset` for query encoding, `response_charset` for response fallback encoding, `search.page_size` plus `{offset}` and `pagination.offset` for offset pagination, `result.base_path` for relative forum links, and `value_attribute` with `as: bytes_size` or `as: unix_date` for machine-readable size and date attributes.
