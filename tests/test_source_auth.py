@@ -374,3 +374,141 @@ def test_password_encoding_failure_is_actionable_and_redacted(client):
     assert response.status_code == 502
     assert "browser session" in response.text
     assert "private-password" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("phase", "responses"),
+    [
+        ("opening the login page", []),
+        ("submitting the login form", [LOGIN]),
+        ("loading the requested page after login", [LOGIN, LOGGED]),
+    ],
+)
+def test_403_reports_exact_stage_without_password_claim(client, phase, responses):
+    source = create(client).json()
+    denied = urllib.error.HTTPError(
+        source["base_url"] + "/forum/login.php", 403, "Forbidden", Message(), None
+    )
+    with patch("app.source_auth.urllib.request.build_opener") as build:
+        build.return_value.open.side_effect = [Response(html) for html in responses] + [
+            denied
+        ]
+        response = client.post(f"/api/sources/{source['id']}/login")
+        assert build.return_value.open.call_count == len(responses) + 1
+        # A fresh password session never probes the protected tracker before login.
+        assert (
+            build.return_value.open.call_args_list[0]
+            .args[0]
+            .full_url.endswith("/forum/login.php")
+        )
+    assert response.status_code == 502
+    message = response.json()["detail"]
+    assert phase in message
+    assert "does not establish" in message
+    assert "private-password" not in message and "private-user" not in message
+    public = client.get("/api/sources").json()[0]["auth"]
+    assert public["last_error"] == message
+    with database.connect() as db:
+        row = db.execute("SELECT * FROM source_auth").fetchone()
+        assert (
+            row["last_error"] is None
+        )  # retain paced retries for transient HTTP errors
+        assert row["last_request_error"] == message
+
+
+def test_login_bootstrap_retains_hidden_fields_and_form_session(client):
+    from urllib.response import addinfourl
+
+    source = create(client).json()
+    seen = []
+    login_url = source["base_url"] + "/forum/login.php"
+    target = source["base_url"] + "/forum/tracker.php"
+
+    class FormSource(urllib.request.BaseHandler):
+        handler_order = 100
+
+        def https_open(self, request):
+            seen.append(request)
+            headers = Message()
+            headers["Content-Type"] = "text/html; charset=windows-1251"
+            if len(seen) == 1:
+                assert request.full_url == login_url
+                headers["Set-Cookie"] = "prelogin=form-session; Path=/; Secure"
+                html = """<form><input type="hidden" name="unrelated" value="ignore"></form>
+                    <form><input name="login_username"><input type="hidden" name="form_token" value="fake-form-token">
+                    <input type="hidden" name="login_password" value="do-not-use"></form>"""
+            elif request.data:
+                fields = urllib.parse.parse_qs(request.data.decode())
+                assert fields["form_token"] == ["fake-form-token"]
+                assert "unrelated" not in fields
+                assert fields["login_password"] == ["private-password"]
+                assert request.get_header("Cookie") == "prelogin=form-session"
+                assert request.get_header("Referer") == login_url
+                assert request.get_header("Origin") == source["base_url"]
+                headers["Set-Cookie"] = (
+                    "bb_session=authenticated-session; Path=/; Secure"
+                )
+                html = LOGGED
+            else:
+                assert request.full_url == target
+                assert "bb_session=authenticated-session" in request.get_header(
+                    "Cookie"
+                )
+                html = LOGGED
+            result = addinfourl(
+                io.BytesIO(html.encode("windows-1251")), headers, request.full_url, 200
+            )
+            result.msg = "OK"
+            return result
+
+    builder = urllib.request.build_opener
+    with patch(
+        "app.source_auth.urllib.request.build_opener",
+        side_effect=lambda *handlers: builder(*handlers, FormSource()),
+    ):
+        html, code = source_auth.fetch_source_html(
+            source["id"], target, get_adapter("rutracker")
+        )
+    assert code == 200 and html == LOGGED
+    assert [request.get_method() for request in seen] == ["GET", "POST", "GET"]
+
+
+def test_diagnostic_column_upgrade_preserves_saved_credentials(client):
+    assert create(client).status_code == 201
+    with database.connect() as db:
+        before = db.execute("SELECT secret FROM source_auth").fetchone()["secret"]
+        db.execute("ALTER TABLE source_auth DROP COLUMN last_request_error")
+    database.initialise()
+    with database.connect() as db:
+        row = db.execute("SELECT * FROM source_auth").fetchone()
+        assert row["secret"] == before
+        assert source_auth._read(row)["password"] == "private-password"
+    assert client.get("/api/sources").json()[0]["auth"]["mode"] == "password"
+
+
+def test_detail_request_retains_http_failure_status(client):
+    source = create(client).json()
+    job = client.post(
+        "/api/jobs", json={"source_id": source["id"], "query": "Example"}
+    ).json()
+    with database.connect() as db:
+        result_id = db.execute(
+            "INSERT INTO results(source_id, remote_query, title, details_url) VALUES (?, ?, ?, ?)",
+            (
+                source["id"],
+                "Example",
+                "Example",
+                source["base_url"] + "/forum/viewtopic.php?t=1",
+            ),
+        ).lastrowid
+    with patch(
+        "app.crawler.fetch_source_html",
+        side_effect=source_auth.SourceHTTPError(
+            403, Message(), "checking the saved session"
+        ),
+    ):
+        response = client.post(f"/api/results/{result_id}/magnet")
+    assert response.status_code == 502
+    log = client.get(f"/api/jobs/{job['id']}/requests").json()[0]
+    assert log["http_status"] == 403
+    assert "checking the saved session" in log["error"]

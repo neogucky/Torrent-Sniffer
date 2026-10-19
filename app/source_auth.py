@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 from typing import Any
 
@@ -30,10 +31,14 @@ class SourceAuthError(RuntimeError):
 
 
 class SourceHTTPError(RuntimeError):
-    def __init__(self, code: int, headers) -> None:
+    def __init__(self, code: int, headers, phase: str | None = None) -> None:
         self.code = code
         self.headers = headers
-        super().__init__(f"Source returned HTTP {code}")
+        self.phase = phase
+        message = f"Source returned HTTP {code}" + (f" while {phase}" if phase else "")
+        if code == 403:
+            message += ". The source refused this request; this does not establish that the account password is wrong. Browser access may use different session state or request handling."
+        super().__init__(message)
 
 
 def source_lock(source_id: int) -> threading.RLock:
@@ -73,18 +78,20 @@ def _write(
     secret = _cipher().encrypt(json.dumps(config).encode()).decode()
     db.execute(
         """INSERT INTO source_auth(source_id, mode, secret, last_error) VALUES (?, ?, ?, ?)
-                  ON CONFLICT(source_id) DO UPDATE SET mode=excluded.mode, secret=excluded.secret, last_error=excluded.last_error""",
+                  ON CONFLICT(source_id) DO UPDATE SET mode=excluded.mode, secret=excluded.secret, last_error=excluded.last_error,
+                  last_request_error=NULL""",
         (source_id, config["mode"], secret, error),
     )
 
 
 def public_auth(db, source_id: int) -> dict[str, Any]:
     row = db.execute(
-        "SELECT mode, last_error FROM source_auth WHERE source_id=?", (source_id,)
+        "SELECT mode, last_error, last_request_error FROM source_auth WHERE source_id=?",
+        (source_id,),
     ).fetchone()
     return {
         "mode": row["mode"] if row else "none",
-        "last_error": row["last_error"] if row else None,
+        "last_error": (row["last_error"] or row["last_request_error"]) if row else None,
     }
 
 
@@ -176,6 +183,34 @@ def _logged_in(html: str) -> bool:
     return bool(re.search(r"\bid\s*=\s*['\"]logged-in-username['\"]", html, re.I))
 
 
+class _LoginFormParser(HTMLParser):
+    """Retain hidden fields only from the form that contains the account input."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.fields: dict[str, str] = {}
+        self._form: dict[str, str] | None = None
+        self._login_form = False
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        values = dict(attrs)
+        if tag == "form":
+            self._form = {}
+            self._login_form = False
+        elif tag == "input" and self._form is not None:
+            name = values.get("name")
+            if name == "login_username":
+                self._login_form = True
+            if name and values.get("type", "").lower() == "hidden":
+                self._form[name] = values.get("value") or ""
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "form" and self._form is not None:
+            if self._login_form:
+                self.fields = self._form
+            self._form = None
+
+
 def fetch_source_html(
     source_id: int, url: str, adapter: dict[str, Any]
 ) -> tuple[str, int]:
@@ -225,7 +260,9 @@ def fetch_source_html(
             urllib.request.HTTPCookieProcessor(jar),
         )
 
-        def request(target: str, data: bytes | None = None) -> tuple[str, int]:
+        def request(
+            target: str, data: bytes | None = None, *, phase: str
+        ) -> tuple[str, int]:
             pause = _next_request.get(source_id, 0) - time.monotonic()
             if pause > 0:
                 time.sleep(pause)
@@ -235,7 +272,12 @@ def fetch_source_html(
                 headers={
                     "User-Agent": USER_AGENT,
                     "Accept": "text/html",
-                    "Referer": source["base_url"],
+                    "Referer": target if data is not None else source["base_url"],
+                    **(
+                        {"Origin": source["base_url"].rstrip("/")}
+                        if data is not None
+                        else {}
+                    ),
                 },
             )
             try:
@@ -248,7 +290,7 @@ def fetch_source_html(
             except urllib.error.HTTPError as error:
                 if error.code == 401:
                     return "", 401
-                raise SourceHTTPError(error.code, error.headers) from error
+                raise SourceHTTPError(error.code, error.headers, phase) from error
             except urllib.error.URLError as error:
                 raise RuntimeError("Could not reach the configured source") from error
             finally:
@@ -256,43 +298,70 @@ def fetch_source_html(
                     time.monotonic() + source["current_delay_seconds"]
                 )
 
-        try:
-            html, status = request(url)
-            if not _logged_in(html):
-                if config["mode"] == "cookie":
-                    raise SourceAuthError(
-                        "Browser session expired or was rejected. Log in in your browser and replace the Cookie header in Edit source."
-                    )
-                if re.search(r"cap_sid|cap_code_|/captcha/", html, re.I):
-                    raise SourceAuthError(
-                        "Source requires a CAPTCHA. Log in in your browser and use Browser session cookie in Edit source."
-                    )
-                login_url = urllib.parse.urljoin(
-                    source["base_url"].rstrip("/") + "/", "forum/login.php"
+        def login() -> None:
+            login_url = urllib.parse.urljoin(
+                source["base_url"].rstrip("/") + "/", "forum/login.php"
+            )
+            login_page, _ = request(login_url, phase="opening the login page")
+            if _logged_in(login_page):
+                return
+            if re.search(r"cap_sid|cap_code_|/captcha/", login_page, re.I):
+                raise SourceAuthError(
+                    "Source requires a CAPTCHA. Log in in your browser and use Browser session cookie in Edit source."
                 )
-                try:
-                    body = urllib.parse.urlencode(
-                        {
-                            "login_username": config["username"],
-                            "login_password": config["password"],
-                            "login": "Login",
-                        },
-                        encoding=adapter.get("response_charset", "utf-8"),
-                    ).encode("ascii")
-                except UnicodeEncodeError as error:
-                    raise SourceAuthError(
-                        "Credentials use characters unsupported by this source. Use a browser session cookie."
-                    ) from error
-                login_html, _ = request(login_url, body)
-                if not _logged_in(login_html):
-                    raise SourceAuthError(
-                        "Login failed or requires a CAPTCHA. Check credentials, or log in in your browser and use Browser session cookie."
-                    )
-                html, status = request(url)
+            form = _LoginFormParser()
+            form.feed(login_page)
+            fields = {
+                **form.fields,
+                "login_username": config["username"],
+                "login_password": config["password"],
+                "login": "Login",
+            }
+            try:
+                body = urllib.parse.urlencode(
+                    fields, encoding=adapter.get("response_charset", "utf-8")
+                ).encode("ascii")
+            except UnicodeEncodeError as error:
+                raise SourceAuthError(
+                    "Credentials use characters unsupported by this source. Use a browser session cookie."
+                ) from error
+            login_html, _ = request(login_url, body, phase="submitting the login form")
+            if not _logged_in(login_html):
+                raise SourceAuthError(
+                    "Login was not confirmed or requires a CAPTCHA. Check the login in your browser, or use Browser session cookie."
+                )
+
+        try:
+            if config["mode"] == "password" and not config.get("cookies"):
+                # Establish the login form's session before requesting protected pages.
+                login()
+                html, status = request(
+                    url, phase="loading the requested page after login"
+                )
+            else:
+                html, status = request(url, phase="checking the saved session")
                 if not _logged_in(html):
-                    raise SourceAuthError(
-                        "Login did not grant source access. Use a fresh browser session cookie."
+                    if config["mode"] == "cookie":
+                        raise SourceAuthError(
+                            "Browser session expired or was rejected. Log in in your browser and replace the Cookie header in Edit source."
+                        )
+                    login()
+                    html, status = request(
+                        url, phase="loading the requested page after login"
                     )
+            if not _logged_in(html):
+                raise SourceAuthError(
+                    "Login did not grant source access. Use a fresh browser session cookie."
+                )
+        except SourceHTTPError as error:
+            # Keep diagnostics across page reloads without converting transient HTTP
+            # failures into cached credential failures or disabling paced retries.
+            with database.connect() as db:
+                db.execute(
+                    "UPDATE source_auth SET last_request_error=? WHERE source_id=?",
+                    (str(error), source_id),
+                )
+            raise
         except SourceAuthError as error:
             with database.connect() as db:
                 db.execute(

@@ -211,8 +211,10 @@ def initialise() -> None:
             source_id INTEGER PRIMARY KEY REFERENCES sources(id),
             mode TEXT NOT NULL CHECK(mode IN ('password', 'cookie')),
             secret TEXT NOT NULL,
-            last_error TEXT
+            last_error TEXT,
+            last_request_error TEXT
         )""")
+        _add_column_if_missing(db, "source_auth", "last_request_error", "TEXT")
         _backfill_result_sizes(db)
         _backfill_legacy_progress(db)
         db.execute(

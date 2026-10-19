@@ -628,7 +628,8 @@ def test_source_login(source_id: int, _: dict[str, Any] = Depends(require_admin)
             if source["kind"] != "rutracker":
                 raise HTTPException(422, "This source does not use account login")
             db.execute(
-                "UPDATE source_auth SET last_error=NULL WHERE source_id=?", (source_id,)
+                "UPDATE source_auth SET last_error=NULL, last_request_error=NULL WHERE source_id=?",
+                (source_id,),
             )
         try:
             fetch_source_html(

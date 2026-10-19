@@ -388,7 +388,12 @@ def fetch_magnet_now(result_id: int) -> str | None:
         html, http_status = fetch_source_html(
             item["source_id"], item["details_url"], get_adapter(item["kind"])
         )
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as error:
+    except (
+        urllib.error.URLError,
+        urllib.error.HTTPError,
+        SourceHTTPError,
+        TimeoutError,
+    ) as error:
         _record_direct_magnet_result(
             item, "failed", getattr(error, "code", None), None, error
         )
