@@ -176,3 +176,22 @@ def test_manually_classify_auto_created_wish_without_losing_history(client, sour
     assert response.json()["kind"] == "movie"
     assert len(wishes(client)) == 1
     assert wishes(client)[0]["crawl_count"] == 1
+
+
+def test_interrupted_history_migration_can_retry(client, source):
+    import pytest
+
+    with database.connect() as db:
+        db.execute("DROP INDEX crawl_jobs_wishlist")
+        db.execute("ALTER TABLE crawl_jobs DROP COLUMN wishlist_id")
+        db.execute(
+            "INSERT INTO crawl_jobs(source_id, query) VALUES (?, 'Example Movie')",
+            (source["id"],),
+        )
+    with patch(
+        "app.wishlist.ensure_wish", side_effect=RuntimeError("simulated interruption")
+    ):
+        with pytest.raises(RuntimeError, match="interruption"):
+            database.initialise()
+    database.initialise()
+    assert wishes(client)[0]["crawl_count"] == 1

@@ -43,6 +43,9 @@ def initialise_wishlist(db: sqlite3.Connection) -> None:
     columns = {row["name"] for row in db.execute("PRAGMA table_info(crawl_jobs)")}
     if "wishlist_id" in columns:
         return
+    # Keep adding the marker column and backfilling history atomic. Otherwise a
+    # failed first upgrade could leave the column present but the history empty.
+    db.execute("SAVEPOINT wishlist_migration")
     db.execute(
         "ALTER TABLE crawl_jobs ADD COLUMN wishlist_id INTEGER REFERENCES wishlist(id)"
     )
@@ -57,6 +60,7 @@ def initialise_wishlist(db: sqlite3.Connection) -> None:
         if query_key(result["remote_query"]):
             wish_id = ensure_wish(db, result["remote_query"])
             link_result(db, wish_id, result["id"])
+    db.execute("RELEASE SAVEPOINT wishlist_migration")
 
 
 def link_result(db: sqlite3.Connection, wish_id: int, result_id: int) -> None:
