@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 from typing import Any
@@ -18,6 +19,7 @@ from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 
 from . import database
+from .browser_headers import extract_request_headers, validate_browser_headers
 
 USER_AGENT = "ResearchIndex/0.1 (+local metadata research; contact: local-user)"
 _key_lock = threading.Lock()
@@ -37,8 +39,114 @@ class SourceHTTPError(RuntimeError):
         self.phase = phase
         message = f"Source returned HTTP {code}" + (f" while {phase}" if phase else "")
         if code == 403:
-            message += ". The source refused this request; this does not establish that the account password is wrong. Browser access may use different session state or request handling."
+            message += ". Access was refused; this does not establish that the account password is wrong. Browser access may use different session state or request handling."
+            if headers and headers.get("X-Mitmproxy-Blocked-Reason"):
+                reason = headers.get("X-Mitmproxy-Blocked-Reason", "").upper()
+                label = (
+                    reason
+                    if reason
+                    in {
+                        "ROBOTS_DENIED",
+                        "BLOCK_LIST",
+                        "HOST_NOT_ALLOWED",
+                        "CONTENT_POLICY",
+                    }
+                    else "an access policy"
+                )
+                message += (
+                    f" Response headers identify a network proxy denial ({label})."
+                )
+            elif headers and headers.get("CF-Mitigated", "").lower() == "challenge":
+                message += " The response explicitly identifies a browser-verification challenge."
         super().__init__(message)
+
+
+@dataclass(frozen=True)
+class CookieHeader:
+    header: str
+    count: int
+
+
+def parse_cookie_header(value: str) -> CookieHeader:
+    """Validate a complete request header or a single account cookie, without echoing it."""
+    value = value.strip()
+    if re.match(r"set-cookie\s*:", value, re.IGNORECASE):
+        raise ValueError(
+            "This is a Set-Cookie response header. Copy the Cookie request header from Network instead."
+        )
+    if value.startswith(("{", "[")):
+        raise ValueError(
+            "This looks like a cookie export. Paste the Cookie request header, not JSON or a Cookies table."
+        )
+    if re.match(r"(?:curl\b|fetch\s*\(|GET\s|POST\s)", value, re.IGNORECASE):
+        raise ValueError(
+            "Paste only the Cookie request header, not the full request or Copy as cURL command."
+        )
+    value = re.sub(r"^cookie[ \t]*:[ \t]*", "", value, count=1, flags=re.IGNORECASE)
+    if not value or any(ord(char) < 32 or ord(char) > 126 for char in value):
+        raise ValueError(
+            "Paste a single Cookie request header line; remove other headers or Cookies table rows."
+        )
+    parts: dict[str, str] = {}
+    attributes = {
+        "path",
+        "domain",
+        "expires",
+        "max-age",
+        "samesite",
+        "secure",
+        "httponly",
+        "partitioned",
+        "priority",
+    }
+    for part in value.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name, separator, raw = part.partition("=")
+        name, raw = name.strip(), raw.strip()
+        if name.lower() in attributes:
+            raise ValueError(
+                "Cookie attributes such as Path or HttpOnly belong to Set-Cookie. Copy the Cookie request header instead."
+            )
+        if not separator:
+            raise ValueError(
+                "Include the cookie name and value, for example bb_session=<your value>; a bare value is not enough."
+            )
+        if not re.fullmatch(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+", name):
+            raise ValueError(
+                "Cookie names must use name=value pairs separated by semicolons. Copy the request header rather than a table."
+            )
+        content = (
+            raw[1:-1]
+            if len(raw) >= 2 and raw.startswith('"') and raw.endswith('"')
+            else raw
+        )
+        if not re.fullmatch(r"[\x21\x23-\x2b\x2d-\x3a\x3c-\x5b\x5d-\x7e]*", content):
+            raise ValueError(
+                "A cookie value has unsupported characters. Copy the Cookie request header exactly; do not decode it."
+            )
+        if name in parts:
+            raise ValueError(
+                "The cookie header repeats a cookie name. Copy the header from one tracker page request."
+            )
+        parts[name] = raw
+    session = parts.get("bb_session", "").strip('"')
+    if not session:
+        raise ValueError("bb_session is missing or empty.")
+    if session.casefold() in {
+        "...",
+        "<your value>",
+        "your-session-value",
+        "your_value",
+        "your_session_value",
+    }:
+        raise ValueError(
+            "Replace the example with your actual bb_session value from the browser request."
+        )
+    return CookieHeader(
+        "; ".join(f"{name}={raw}" for name, raw in parts.items()), len(parts)
+    )
 
 
 def source_lock(source_id: int) -> threading.RLock:
@@ -102,6 +210,7 @@ def save_auth(
     username: str | None,
     password: str | None,
     cookie: str | None,
+    browser_headers: dict[str, str] | None = None,
 ) -> None:
     if mode == "none":
         db.execute("DELETE FROM source_auth WHERE source_id=?", (source_id,))
@@ -111,9 +220,23 @@ def save_auth(
     ).fetchone()
     # A complete replacement can recover from a lost key without decrypting old data.
     replacement = bool(username and password) if mode == "password" else bool(cookie)
-    old = _read(row) if row and row["mode"] == mode and not replacement else {}
+    old = {}
+    if (
+        row
+        and row["mode"] == mode
+        and (not replacement or (mode == "cookie" and browser_headers is None))
+    ):
+        try:
+            old = _read(row)
+        except SourceAuthError:
+            if not replacement:
+                raise
     config: dict[str, Any] = {"mode": mode, "cookies": []}
     if mode == "password":
+        if browser_headers is not None:
+            raise ValueError(
+                "Browser request headers are supported by browser-session login only."
+            )
         config.update(
             username=username or old.get("username"),
             password=password or old.get("password"),
@@ -122,19 +245,32 @@ def save_auth(
             raise ValueError("A username and password are required for automatic login")
     elif mode == "cookie":
         header = cookie or old.get("cookie")
-        if not header or any(ord(c) < 32 or ord(c) > 126 for c in header):
-            raise ValueError("Paste a valid browser Cookie request header")
-        parsed = SimpleCookie()
-        try:
-            parsed.load(header)
-        except Exception as error:
-            raise ValueError("Paste a valid browser Cookie request header") from error
-        if not parsed:
-            raise ValueError("Paste a valid browser Cookie request header")
-        config["cookie"] = header
+        config["cookie"] = parse_cookie_header(header or "").header
+        context = old.get("browser_headers", {})
+        if browser_headers is not None:
+            context = {**context, **browser_headers} if browser_headers else {}
+        config["browser_headers"] = validate_browser_headers(context)
     else:
         raise ValueError("Unknown login mode")
     _write(db, source_id, config)
+
+
+def save_request_headers(db, source_id: int, value: str, base_url: str) -> None:
+    if value.strip():
+        cookie, headers = extract_request_headers(value, base_url)
+        save_auth(db, source_id, "cookie", None, None, cookie, headers)
+        return
+    row = db.execute(
+        "SELECT * FROM source_auth WHERE source_id=?", (source_id,)
+    ).fetchone()
+    if not row or row["mode"] != "cookie":
+        raise ValueError("Request headers are required.")
+    config = _read(row)
+    parse_cookie_header(config.get("cookie", ""))
+    if not config.get("browser_headers", {}).get("User-Agent"):
+        raise ValueError(
+            "Saved headers are missing User-Agent. Paste full request headers."
+        )
 
 
 def _origin(url: str) -> tuple[str, str | None, int | None]:
@@ -245,6 +381,7 @@ def fetch_source_html(
                 "Authenticated requests require HTTPS on the configured source origin."
             )
         config = _read(row)
+        browser_headers = validate_browser_headers(config.get("browser_headers", {}))
         jar = http.cookiejar.CookieJar()
         for item in config.get("cookies", []):
             jar.set_cookie(http.cookiejar.Cookie(**item))
@@ -272,6 +409,8 @@ def fetch_source_html(
                 headers={
                     "User-Agent": USER_AGENT,
                     "Accept": "text/html",
+                    "Accept-Encoding": "identity",
+                    **browser_headers,
                     "Referer": target if data is not None else source["base_url"],
                     **(
                         {"Origin": source["base_url"].rstrip("/")}

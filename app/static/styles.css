@@ -947,14 +947,13 @@ textarea {
 .wish-row p { margin: 5px 0 0; font-size: .78rem; }
 .wish-actions { justify-content: flex-start; gap: 6px; }
 .wish-actions button { min-height: 30px; padding: 5px 8px; font-size: .78rem; }
-#source-auth-fields { display: grid; gap: 12px; border: 1px solid #43564a; border-radius: 8px; padding: 14px; }
-#source-auth-fields[hidden], #source-password-fields[hidden], #source-cookie-field[hidden] { display: none; }
-#source-password-fields { display: grid; gap: 12px; }
-#source-auth-fields p { margin: 0; font-size: .8rem; line-height: 1.5; }
-#source-auth-fields details p { margin: 10px 0; }
-#source-login-link { color: #8ce5a1; }
+#source-auth-fields { display: grid; gap: 7px; }
+#source-auth-fields p { margin: 0; font-size: .8rem; }
 #source-dialog { max-height: 90vh; overflow-y: auto; }
 @media (max-width: 760px) {
     .wish-form { grid-template-columns: 1fr auto; }
     .wish-form > label:first-child { grid-column: span 2; }
 }
+
+#source-auth-request-headers { width: 100%; min-height: 140px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+#source-auth-request-headers[aria-invalid="true"] { border-color: #ffb3b3; }

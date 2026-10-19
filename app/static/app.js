@@ -7,9 +7,14 @@ let wishlistRenderKey = "";
 let jobs = [];
 let adapters = [];
 let editingSourceId = null;
+let editingSourceSnapshot = null;
+let duplicateSourceId = null;
+let savedSourceAuthMode = 'none';
+let sourceSaveInFlight = false;
 let editingAdapterId = null;
 let editingUserId = null;
 let currentUser = null;
+let authEpoch = 0;
 let needsSetup = false;
 let qbittorrent = {configured: false, locations: []};
 let jobStates = new Map();
@@ -55,23 +60,29 @@ function saveDebugEnabled() {
 }
 
 async function api(path, options = {}) {
+    const requestEpoch = authEpoch;
     const response = await fetch(path, {cache: 'no-store', headers: {'Content-Type': 'application/json'}, ...options});
     if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         const message = Array.isArray(payload.detail) ? payload.detail.map(item => item.msg || 'Invalid value').join('; ') : (payload.detail || 'Request failed');
-        if (response.status === 401 && !path.startsWith('/api/auth/')) showAuth(false);
-        throw new Error(message);
+        if (response.status === 401 && !path.startsWith('/api/auth/') && requestEpoch === authEpoch) showAuth(false, true);
+        const error = new Error(message);
+        error.status = response.status;
+        throw error;
     }
     return response.status === 204 ? null : response.json();
 }
 
-function showAuth(setup) {
+function showAuth(setup, expired = false) {
+    if (currentUser) ++authEpoch;
     needsSetup = setup;
     currentUser = null;
     $('#app').hidden = true;
     $('#account').hidden = true;
     $('#auth-title').textContent = setup ? 'Create the owner account' : 'Log in';
-    $('#auth-copy').textContent = setup ? 'No account exists yet. This one-time setup creates the administrator.' : 'Use your Torrent Sniffer account.';
+    $('#auth-copy').textContent = setup ? 'No account exists yet. This one-time setup creates the administrator.'
+        : expired ? 'Your Torrent Sniffer session has expired. Log in to continue; your open source form is preserved.'
+        : 'Use your Torrent Sniffer account.';
     $('#auth-confirm-wrap').hidden = !setup;
     $('#auth-confirm').disabled = !setup;
     $('#auth-confirm').required = setup;
@@ -82,12 +93,14 @@ function showAuth(setup) {
 }
 
 async function activateUser(user) {
+    ++authEpoch;
     currentUser = user;
     $('#current-user').textContent = user.username;
     $('#account').hidden = false;
     $('#app').hidden = false;
     if ($('#auth-dialog').open) $('#auth-dialog').close();
     await refreshAll();
+    await openSourceFromLocation();
 }
 
 async function initialiseApp() {
@@ -519,6 +532,7 @@ function openCustomSizeDialog() {
 
 function openSourceDialog(source = null) {
     editingSourceId = source?.id ?? null;
+    editingSourceSnapshot = source;
     $('#source-dialog-title').textContent = source ? 'Edit source' : 'Add source';
     const adapterSelect = $('#source-kind');
     adapterSelect.replaceChildren(...adapters.map(adapter => new Option(adapter.label, adapter.id)));
@@ -527,16 +541,58 @@ function openSourceDialog(source = null) {
     $('#delay').value = source?.min_delay_seconds ?? 20;
     $('#add-adapter').hidden = !currentUser?.is_admin;
     $('#edit-adapter').hidden = !currentUser?.is_admin;
-    $('#source-error').textContent = source?.auth?.last_error || '';
-    $('#source-auth-mode').value = source?.auth?.mode && source.auth.mode !== 'none' ? source.auth.mode : 'password';
-    for (const id of ['username', 'password', 'cookie']) {
-        const field = $(`#source-auth-${id}`);
-        field.value = '';
-        field.placeholder = source?.auth?.mode && source.auth.mode !== 'none' ? 'Saved — leave blank to keep' : '';
-    }
+    $('#source-error').textContent = source?.auth?.last_error ? `Last test: ${sourceErrorMessage(source.auth.last_error)}` : '';
+    savedSourceAuthMode = source?.auth?.mode || 'none';
+    $('#source-auth-request-headers').value = '';
+    $('#source-auth-request-headers').removeAttribute('aria-invalid');
     updateSourceAuthFields();
-    $('#source-dialog').showModal();
+    if (source) {
+        $('#source-select').value = String(source.id);
+        history.replaceState(null, '', `#source=${source.id}`);
+    } else if (location.hash.startsWith('#source=')) {
+        history.replaceState(null, '', location.pathname + location.search);
+    }
+    if (!$('#source-dialog').open) $('#source-dialog').showModal();
 }
+
+async function openExistingSource(id) {
+    try {
+        await refreshSources();
+        const source = sources.find(item => item.id === id);
+        if (!source) {
+            status('This source is no longer available. Select a source and try Edit again.');
+            return;
+        }
+        openSourceDialog(source);
+    } catch (error) {
+        status(error.message);
+    }
+}
+
+async function openSourceFromLocation() {
+    const match = /^#source=(\d+)$/.exec(location.hash);
+    if (match && !$('#source-dialog').open) await openExistingSource(Number(match[1]));
+}
+window.addEventListener('hashchange', () => {
+    if (currentUser) openSourceFromLocation();
+});
+
+function updateSourceDuplicate() {
+    const url = $('#source-url').value.trim().replace(/\/+$/, '');
+    const existing = sources.find(item => item.id !== editingSourceId && item.base_url === url);
+    duplicateSourceId = existing?.id ?? null;
+    $('#source-duplicate').hidden = !existing;
+    syncSourceSubmitState();
+}
+
+$('#edit-existing-source').onclick = () => {
+    const source = sources.find(item => item.id === duplicateSourceId);
+    if (!source) return;
+    const sameKind = $('#source-kind').value === source.kind;
+    const rawHeaders = $('#source-auth-request-headers').value;
+    openSourceDialog(source);
+    if (sameKind) $('#source-auth-request-headers').value = rawHeaders;
+};
 
 const emptyAdapter = () => ({
     id: 'new-adapter', label: 'New adapter',
@@ -559,7 +615,7 @@ async function openAdapterDialog(adapterId = null) {
 }
 
 $('#add-source').onclick = () => openSourceDialog();
-$('#edit-source').onclick = () => openSourceDialog(sources.find(source => source.id === Number($('#source-select').value)));
+$('#edit-source').onclick = () => openExistingSource(Number($('#source-select').value));
 $('#delete-source').onclick = async () => {
     const source = sources.find(item => item.id === Number($('#source-select').value));
     if (!source || !confirm(`Delete ${sourceName(source)}? Tasks will be removed but found results stay.`)) return;
@@ -576,39 +632,47 @@ $('#add-adapter').onclick = () => openAdapterDialog();
 $('#edit-adapter').onclick = () => openAdapterDialog($('#source-kind').value);
 $('#source-form').onsubmit = async (event) => {
     event.preventDefault();
+    if (sourceSaveInFlight) return;
+    updateSourceDuplicate();
+    if (duplicateSourceId) return;
+    const accountSource = currentUser?.is_admin && $('#source-kind').value === 'rutracker';
     const payload = {
         base_url: $('#source-url').value,
         kind: $('#source-kind').value,
         min_delay_seconds: Number($('#delay').value)
     };
     if (currentUser?.is_admin) {
-        payload.auth_mode = payload.kind === 'rutracker' ? $('#source-auth-mode').value : 'none';
-        payload.auth_username = $('#source-auth-username').value || null;
-        payload.auth_password = $('#source-auth-password').value || null;
-        payload.auth_cookie = $('#source-auth-cookie').value || null;
+        if (accountSource) payload.auth_request_headers = $('#source-auth-request-headers').value;
+        else payload.auth_mode = 'none';
     }
-    const button = event.submitter;
-    if (button) button.disabled = true;
+    if (accountSource && !payload.auth_request_headers.trim() && !canKeepSourceHeaders()) {
+        $('#source-error').textContent = 'Request headers are required.';
+        $('#source-auth-request-headers').setAttribute('aria-invalid', 'true');
+        $('#source-auth-request-headers').focus();
+        return;
+    }
+    sourceSaveInFlight = true;
+    syncSourceSubmitState();
     $('#source-error').textContent = '';
     try {
         const saved = await api(editingSourceId ? `/api/sources/${editingSourceId}` : '/api/sources', {
-            method: editingSourceId ? 'PUT' : 'POST',
-            body: JSON.stringify(payload)
+            method: editingSourceId ? 'PUT' : 'POST', body: JSON.stringify(payload)
         });
-        editingSourceId = saved.id;
-        for (const id of ['username', 'password', 'cookie']) $(`#source-auth-${id}`).value = '';
-        if (button?.value === 'test') {
-            $('#source-error').textContent = 'Source saved. Testing login with source pacing…';
+        openSourceDialog(saved);
+        if (accountSource) {
+            $('#save-source').textContent = 'Testing…';
             await api(`/api/sources/${saved.id}/login`, {method: 'POST'});
         }
         $('#source-dialog').close();
         await refreshAll();
-        status(button?.value === 'test' ? 'Source saved; login succeeded.' : 'Source saved.');
+        status(accountSource ? 'Source saved; session accepted.' : 'Source saved.');
     } catch (error) {
-        $('#source-error').textContent = error.message;
-        await refreshSources();
+        $('#source-error').textContent = sourceErrorMessage(error.message);
+        if (error.status !== 401) await refreshSources().catch(() => {});
+        updateSourceDuplicate();
     } finally {
-        if (button) button.disabled = false;
+        sourceSaveInFlight = false;
+        syncSourceSubmitState();
     }
 };
 $('#close-adapter-dialog').onclick = $('#cancel-adapter').onclick = () => $('#adapter-dialog').close();
@@ -728,18 +792,21 @@ $('#auth-form').onsubmit = async (event) => {
             method: 'POST',
             body: JSON.stringify({username, password})
         });
+        $('#auth-password').value = '';
+        $('#auth-confirm').value = '';
         await activateUser(user);
     } catch (error) {
         $('#auth-error').textContent = error.message;
     } finally {
         authRequestInFlight = false;
-        if ($('#auth-dialog').open) $('#auth-submit').disabled = false;
+        $('#auth-submit').disabled = false;
     }
 };
 $('#auth-dialog').addEventListener('cancel', event => event.preventDefault());
 $('#logout').onclick = async () => {
     try {
         await api('/api/auth/logout', {method: 'POST'});
+        for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
         showAuth(false);
     } catch (error) {
         status(error.message);
@@ -934,22 +1001,43 @@ $('#remove-qbit').onclick = async () => {
         $('#qbit-error').textContent = error.message;
     }
 };
-function updateSourceAuthFields() {
-    const enabled = currentUser?.is_admin && $('#source-kind').value === 'rutracker';
-    $('#source-auth-fields').hidden = !enabled;
-    $('#save-test-source').hidden = !enabled || $('#source-auth-mode').value === 'none';
-    $('#source-password-fields').hidden = $('#source-auth-mode').value !== 'password';
-    $('#source-cookie-field').hidden = $('#source-auth-mode').value !== 'cookie';
-    const link = $('#source-login-link');
-    link.removeAttribute('href');
-    try {
-        const base = new URL($('#source-url').value);
-        if (base.protocol === 'https:') link.href = new URL('forum/login.php', base.href.replace(/\/$/, '') + '/').href;
-    } catch {}
+function sourceErrorMessage(message) {
+    if (message.includes('browser-verification challenge')) return 'Cloudflare requires browser verification (HTTP 403).';
+    if (message.includes('network proxy denial')) return 'Network policy blocked the request (HTTP 403).';
+    if (message.startsWith('Source returned HTTP 403')) return 'The source refused the request (HTTP 403).';
+    return message;
 }
-$('#source-kind').onchange = $('#source-auth-mode').onchange = $('#source-url').oninput = updateSourceAuthFields;
+
+function canKeepSourceHeaders() {
+    return savedSourceAuthMode === 'cookie' && editingSourceSnapshot?.kind === 'rutracker'
+        && $('#source-kind').value === 'rutracker'
+        && $('#source-url').value.trim().replace(/\/+$/, '') === editingSourceSnapshot.base_url;
+}
+
+function syncSourceSubmitState() {
+    const accountSource = currentUser?.is_admin && $('#source-kind').value === 'rutracker';
+    $('#save-source').disabled = sourceSaveInFlight || duplicateSourceId !== null;
+    $('#save-source').textContent = sourceSaveInFlight ? 'Saving…' : accountSource ? 'Save and test' : 'Save source';
+    for (const id of ['cancel-source', 'close-source-dialog', 'edit-existing-source', 'source-kind', 'source-url', 'delay', 'add-adapter', 'edit-adapter']) $(`#${id}`).disabled = sourceSaveInFlight;
+    $('#source-auth-request-headers').disabled = sourceSaveInFlight || !accountSource;
+}
+
+function updateSourceAuthFields() {
+    $('#source-auth-fields').hidden = !(currentUser?.is_admin && $('#source-kind').value === 'rutracker');
+    $('#source-header-hint').hidden = !canKeepSourceHeaders();
+    updateSourceDuplicate();
+}
+$('#source-kind').onchange = $('#source-url').oninput = updateSourceAuthFields;
+$('#source-auth-request-headers').oninput = () => {
+    $('#source-error').textContent = '';
+    $('#source-auth-request-headers').removeAttribute('aria-invalid');
+};
 $('#source-dialog').addEventListener('close', () => {
-    for (const id of ['username', 'password', 'cookie']) $(`#source-auth-${id}`).value = '';
+    if (location.hash.startsWith('#source=')) history.replaceState(null, '', location.pathname + location.search);
+    $('#source-auth-request-headers').value = '';
+});
+$('#source-dialog').addEventListener('cancel', event => {
+    if (sourceSaveInFlight) event.preventDefault();
 });
 
 function wishTimestamp(value) {
