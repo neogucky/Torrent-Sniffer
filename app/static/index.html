@@ -220,10 +220,10 @@
             <button type="button" class="icon-button" id="close-settings" aria-label="Close">×</button>
         </header>
         <section class="settings-section">
-            <form id="password-form"><h3>Change password</h3><label>New password<input id="new-password" type="password"
+            <form id="password-form"><h3>Change password</h3><label>New password<input id="new-password" minlength="15" type="password"
                                                                                        autocomplete="new-password"
                                                                                        required></label><label>Confirm
-                new password<input id="confirm-new-password" type="password" autocomplete="new-password"
+                new password<input id="confirm-new-password" minlength="15" type="password" autocomplete="new-password"
                                    required></label>
                 <button>Change password</button>
             </form>
@@ -253,7 +253,7 @@
             <button type="button" class="icon-button" id="close-user-dialog" aria-label="Close">×</button>
         </header>
         <label>Username<input id="user-username" autocomplete="username" required></label><label>Password<input
-            id="user-password" type="password" autocomplete="new-password" required></label>
+            id="user-password" minlength="15" type="password" autocomplete="new-password" required></label>
         <p id="user-password-hint" class="hint" hidden>Leave blank to keep the existing password.</p><label>Group<select
             id="user-group">
         <option value="user">User</option>

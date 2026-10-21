@@ -115,7 +115,7 @@ def test_login_reuse_cookie_restart_and_charset(client):
             get_adapter("rutracker"),
         )
         assert build.return_value.open.call_count == 1
-        cookie_handler = build.call_args.args[1]
+        cookie_handler = next(handler for handler in build.call_args.args if isinstance(handler, urllib.request.HTTPCookieProcessor))
         assert next(iter(cookie_handler.cookiejar)).value == "session-secret"
 
 
@@ -314,7 +314,7 @@ def test_cookie_import_and_lost_key_recovery(client, monkeypatch):
             source["base_url"] + "/forum/tracker.php",
             get_adapter("rutracker"),
         )
-        jar = build.call_args.args[1].cookiejar
+        jar = next(handler.cookiejar for handler in build.call_args.args if isinstance(handler, urllib.request.HTTPCookieProcessor))
         assert next(iter(jar)).value == "browser-secret"
     monkeypatch.setenv("SOURCE_SECRETS_KEY", source_auth.Fernet.generate_key().decode())
     with pytest.raises(source_auth.SourceAuthError, match="decrypt"):

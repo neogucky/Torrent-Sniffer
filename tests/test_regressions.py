@@ -62,7 +62,7 @@ class AuthPersistenceTests(unittest.TestCase):
             self.assertEqual(main.auth_status(anonymous), {"needs_setup": False, "user": None})
             main.logout(request, Response())
             self.assertIsNone(main.auth_status(request)["user"])
-            self.assertEqual(main.login(credentials, Response()), user)
+            self.assertEqual(main.login(credentials, Response(), anonymous), user)
 
 
 if __name__ == "__main__":

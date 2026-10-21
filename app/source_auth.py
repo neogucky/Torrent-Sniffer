@@ -20,6 +20,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from . import database
 from .browser_headers import extract_request_headers, validate_browser_headers
+from .source_network import PublicRedirect, public_handlers, validate_source_url
 
 USER_AGENT = "ResearchIndex/0.1 (+local metadata research; contact: local-user)"
 _key_lock = threading.Lock()
@@ -282,7 +283,7 @@ def _origin(url: str) -> tuple[str, str | None, int | None]:
     )
 
 
-class _SameOriginRedirect(urllib.request.HTTPRedirectHandler):
+class _SameOriginRedirect(PublicRedirect):
     def __init__(self, origin: str) -> None:
         self.origin = origin
 
@@ -350,6 +351,7 @@ class _LoginFormParser(HTMLParser):
 def fetch_source_html(
     source_id: int, url: str, adapter: dict[str, Any]
 ) -> tuple[str, int]:
+    validate_source_url(url)
     with source_lock(source_id):
         with database.connect() as db:
             source = db.execute(
@@ -368,7 +370,8 @@ def fetch_source_html(
             request = urllib.request.Request(
                 url, headers={"User-Agent": USER_AGENT, "Accept": "text/html"}
             )
-            with urllib.request.urlopen(request, timeout=25) as response:
+            opener = urllib.request.build_opener(*public_handlers(), PublicRedirect())
+            with opener.open(request, timeout=25) as response:
                 return response.read().decode(
                     response.headers.get_content_charset()
                     or adapter.get("response_charset", "utf-8"),
@@ -393,6 +396,7 @@ def fetch_source_html(
                     _cookie(name, morsel.value, urllib.parse.urlsplit(url).hostname)
                 )
         opener = urllib.request.build_opener(
+            *public_handlers(),
             _SameOriginRedirect(source["base_url"]),
             urllib.request.HTTPCookieProcessor(jar),
         )

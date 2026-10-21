@@ -23,7 +23,7 @@ def client(tmp_path, monkeypatch):
     }
     # No lifespan: explicitly run one worker request per test.
     with patch("app.source_auth.time.sleep"):
-        yield TestClient(main.app)
+        yield TestClient(main.app, base_url="https://testserver")
     main.app.dependency_overrides.clear()
 
 

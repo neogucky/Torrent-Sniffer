@@ -88,6 +88,7 @@ function showAuth(setup, expired = false) {
     $('#auth-confirm').disabled = !setup;
     $('#auth-confirm').required = setup;
     $('#auth-password').autocomplete = setup ? 'new-password' : 'current-password';
+    $('#auth-password').minLength = setup ? 15 : 1;
     $('#auth-submit').textContent = setup ? 'Create account' : 'Log in';
     $('#auth-error').textContent = '';
     if (!$('#auth-dialog').open) $('#auth-dialog').showModal();
@@ -980,7 +981,9 @@ $('#password-form').onsubmit = async (event) => {
             body: JSON.stringify({new_password: $('#new-password').value})
         });
         $('#password-form').reset();
-        $('#settings-error').textContent = 'Password changed.';
+        $('#settings-dialog').close();
+        showAuth(false);
+        $('#auth-error').textContent = 'Password changed. Sign in again with your new password.';
     } catch (error) {
         $('#settings-error').textContent = error.message;
     }

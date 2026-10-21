@@ -50,6 +50,8 @@ from .source_auth import (
     source_lock,
 )
 from .wishlist import archive_download, ensure_wish, query_key
+from .source_network import validate_source_url
+from .login_limits import login_limiter
 
 STATIC_DIR = Path(__file__).parent / "static"
 USERNAME = re.compile(r"[A-Za-z0-9_.-]{3,32}\Z")
@@ -108,18 +110,22 @@ class Credentials(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class NewCredentials(Credentials):
+    password: str = Field(min_length=15, max_length=256)
+
+
 class PasswordChange(BaseModel):
-    new_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=15, max_length=256)
 
 
-class UserCreateInput(Credentials):
+class UserCreateInput(NewCredentials):
     group: str = "user"
 
 
 class UserUpdateInput(BaseModel):
     username: str = Field(min_length=3, max_length=32)
     group: str = "user"
-    password: str | None = Field(default=None, max_length=256)
+    password: str | None = Field(default=None, min_length=15, max_length=256)
 
 
 class QbittorrentLocation(BaseModel):
@@ -207,6 +213,7 @@ def _start_session(db, user: dict[str, Any], response: Response) -> None:
         max_age=SESSION_DAYS * 86400,
         httponly=True,
         samesite="lax",
+        secure=True,
     )
 
 
@@ -270,13 +277,12 @@ async def prevent_auth_caching(request: Request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
-    # Migrate a valid legacy cookie without requiring another sign-in. Never
-    # replace an explicitly supplied instance cookie or revive a logout.
-    legacy_token = request.cookies.get(SESSION_COOKIE)
+    # Refresh existing valid sessions as Secure, preserving their expiry and
+    # migrating the legacy cookie without requiring another sign-in.
+    legacy_token = request.cookies.get(_session_cookie_name()) or request.cookies.get(SESSION_COOKIE)
     if (
         request.url.path == "/api/auth/status"
         and legacy_token
-        and _session_cookie_name() not in request.cookies
     ):
         with connect() as db:
             session = db.execute(
@@ -296,6 +302,7 @@ async def prevent_auth_caching(request: Request, call_next):
                 max_age=max(0, int(remaining.total_seconds())),
                 httponly=True,
                 samesite="lax",
+                secure=True,
             )
     return response
 
@@ -321,7 +328,7 @@ def auth_status(request: Request):
 
 
 @app.post("/api/auth/setup", status_code=201)
-def setup_owner(credentials: Credentials, response: Response):
+def setup_owner(credentials: NewCredentials, response: Response):
     username = _validate_username(credentials.username)
     with connect() as db:
         if db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
@@ -346,8 +353,9 @@ def setup_owner(credentials: Credentials, response: Response):
 
 
 @app.post("/api/auth/login")
-def login(credentials: Credentials, response: Response):
+def login(credentials: Credentials, response: Response, request: Request):
     username = _validate_username(credentials.username)
+    login_limiter.check(username, request.client.host if request.client else 'unknown')
     with connect() as db:
         user = db.execute(
             "SELECT * FROM users WHERE username=? COLLATE NOCASE", (username,)
@@ -358,6 +366,7 @@ def login(credentials: Credentials, response: Response):
             raise HTTPException(401, "Invalid username or password")
         user_data = dict(user)
         _start_session(db, user_data, response)
+    login_limiter.succeeded(username)
     return _public_user(user_data)
 
 
@@ -441,6 +450,7 @@ def update_user(
                 "UPDATE users SET username=?, is_admin=?, password_salt=?, password_hash=? WHERE id=?",
                 (username, update.group == "admin", salt, password_hash, user_id),
             )
+            db.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
         else:
             db.execute(
                 "UPDATE users SET username=?, is_admin=? WHERE id=?",
@@ -479,6 +489,7 @@ def change_password(
             "UPDATE users SET password_salt=?, password_hash=? WHERE id=?",
             (salt, password_hash, user["id"]),
         )
+        db.execute("DELETE FROM sessions WHERE user_id=?", (user["id"],))
     return Response(status_code=204)
 
 
@@ -594,6 +605,10 @@ def parse_source_request_headers(
 
 
 def _validate_source(source: SourceInput) -> str:
+    try:
+        validate_source_url(source.base_url)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
     parsed = urlparse(source.base_url)
     if (
         parsed.scheme not in {"http", "https"}
